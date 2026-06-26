@@ -34,8 +34,8 @@ def _bool_from_body(body: dict[str, Any], key: str, default: bool = False) -> bo
     return default
 
 
-@app.get("/healthz")
-def healthz():
+@app.get("/readiness")
+def readiness():
     return jsonify({"status": "ok"})
 
 
