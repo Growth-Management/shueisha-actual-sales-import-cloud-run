@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from copy import deepcopy
 from pathlib import Path
 
 from payload_builder import SCHEMA_VERSION, validate_payload
 
 
-SAMPLE_DIR = Path("/workspace/agent_files/docs")
+DEFAULT_SAMPLE_DIR = Path(__file__).resolve().parent / "samples"
+SAMPLE_DIR = Path(os.environ.get("PAYLOAD_SAMPLE_DIR", DEFAULT_SAMPLE_DIR))
 SAMPLE_FILES = [
     "sample-payload-apple.json",
     "sample-payload-googleplay.json",
@@ -27,6 +29,12 @@ def load_sample(path: Path) -> dict:
 
 
 def check_samples() -> list[str]:
+    if not SAMPLE_DIR.exists():
+        raise FileNotFoundError(
+            f"sample directory not found: {SAMPLE_DIR}. "
+            "Set PAYLOAD_SAMPLE_DIR to the directory containing sample payload JSON files."
+        )
+
     checked: list[str] = []
     for file_name in SAMPLE_FILES:
         payload = load_sample(SAMPLE_DIR / file_name)
