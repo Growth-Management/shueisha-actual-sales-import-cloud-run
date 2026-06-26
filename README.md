@@ -36,7 +36,7 @@ The current Cloud Run entrypoint is `src/main.py`.
 
 Available endpoints:
 
-- `GET /healthz`
+- `GET /readiness`
 - `POST /agent-request`
 
 `POST /agent-request` accepts either a payload object directly or a wrapper object with `payload`. By default it validates and wraps the payload as the agent API request body. Set `finalize_payload: true` to have the service calculate TROCCO trigger fields before wrapping.
