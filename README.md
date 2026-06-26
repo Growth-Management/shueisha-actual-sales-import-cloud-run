@@ -40,6 +40,7 @@ Available endpoints:
 - `POST /agent-request`
 - `POST /run-result/agent-request`
 - `POST /execution-results/agent-request`
+- `POST /execute/agent-request`
 
 `POST /agent-request` accepts either a payload object directly or a wrapper object with `payload`. By default it validates and wraps the payload as the agent API request body. Set `finalize_payload: true` to have the service calculate TROCCO trigger fields before wrapping.
 
@@ -95,6 +96,43 @@ Expected top-level shape:
       }
     }
   }
+}
+```
+
+`POST /execute/agent-request` runs the pipeline clients first, then builds the same agent API request. It performs:
+
+1. Drive folder polling
+2. BigQuery load jobs
+3. BigQuery production promotion jobs
+4. BigQuery verification checks
+5. TROCCO workflow trigger only when payload v1.0 preconditions pass
+
+The request must include manifest rows and validation results produced by the surrounding import logic, plus BigQuery job definitions:
+
+```json
+{
+  "provider": "apple",
+  "sales_yyyymm": ["202606"],
+  "run_context": {
+    "environment": "prod",
+    "trigger_source": "cloud_run_hourly",
+    "run_id": "2026-06-26T10:00:00Z__apple__001",
+    "run_started_at": "2026-06-26T10:00:00Z",
+    "run_finished_at": null,
+    "is_test": false
+  },
+  "manifest": {
+    "rows": []
+  },
+  "validation": {
+    "results": []
+  },
+  "bigquery": {
+    "load_jobs": [],
+    "promotion_operations": [],
+    "verification_checks": []
+  },
+  "trocco_payload": {}
 }
 ```
 
