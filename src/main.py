@@ -18,6 +18,7 @@ from payload_builder import (  # noqa: E402
     finalize_payload,
     validate_payload,
 )
+from execution_result_connector import build_agent_request_from_execution_results  # noqa: E402
 from run_result_mapper import build_payload_from_run_result  # noqa: E402
 
 
@@ -96,6 +97,29 @@ def run_result_agent_request():
         payload = build_payload_from_run_result(run_result)
         request_body = build_agent_request(
             payload,
+            requested_output=body.get("requested_output", "run_judgment"),
+            include_notification_draft=_bool_from_body(body, "include_notification_draft", True),
+            include_failure_analysis=_bool_from_body(body, "include_failure_analysis", False),
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+    return jsonify(request_body)
+
+
+@app.post("/execution-results/agent-request")
+def execution_results_agent_request():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _error_response("request body must be a JSON object")
+
+    execution_result = body.get("execution_result", body)
+    if not isinstance(execution_result, dict):
+        return _error_response("execution_result must be a JSON object")
+
+    try:
+        request_body = build_agent_request_from_execution_results(
+            execution_result,
             requested_output=body.get("requested_output", "run_judgment"),
             include_notification_draft=_bool_from_body(body, "include_notification_draft", True),
             include_failure_analysis=_bool_from_body(body, "include_failure_analysis", False),
