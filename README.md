@@ -102,12 +102,16 @@ Expected top-level shape:
 `POST /execute/agent-request` runs the pipeline clients first, then builds the same agent API request. It performs:
 
 1. Drive folder polling
-2. BigQuery load jobs
-3. BigQuery production promotion jobs
-4. BigQuery verification checks
-5. TROCCO workflow trigger only when payload v1.0 preconditions pass
+2. Manifest diff generation
+3. Validation result generation
+4. BigQuery load jobs
+5. BigQuery production promotion jobs
+6. BigQuery verification checks
+7. TROCCO workflow trigger only when payload v1.0 preconditions pass
 
-The request must include manifest rows and validation results produced by the surrounding import logic, plus BigQuery job definitions:
+The request can include prebuilt `manifest.rows` and `validation.results`. If omitted, Cloud Run builds them from Drive file metadata and optional `manifest.existing_rows`.
+
+BigQuery load / promotion / verification is skipped when validation fails or when the manifest diff has no `new` or `revised` files.
 
 ```json
 {
@@ -122,10 +126,7 @@ The request must include manifest rows and validation results produced by the su
     "is_test": false
   },
   "manifest": {
-    "rows": []
-  },
-  "validation": {
-    "results": []
+    "existing_rows": []
   },
   "bigquery": {
     "load_jobs": [],
