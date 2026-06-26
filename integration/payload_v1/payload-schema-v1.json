@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/drive-sales-import/payload-schema-v1.json",
+  "title": "Drive sales import Cloud Run execution payload v1.0",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "run_context",
+    "provider",
+    "sales_yyyymm",
+    "manifest_diff",
+    "validation",
+    "staging",
+    "promotion",
+    "verification",
+    "trocco"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "run_context": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "environment",
+        "trigger_source",
+        "run_id",
+        "run_started_at",
+        "run_finished_at",
+        "is_test"
+      ],
+      "properties": {
+        "environment": {
+          "type": "string"
+        },
+        "trigger_source": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "run_finished_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "is_test": {
+          "type": "boolean"
+        }
+      }
+    },
+    "provider": {
+      "enum": ["apple", "googleplay"]
+    },
+    "sales_yyyymm": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9]{6}$"
+      }
+    },
+    "manifest_diff": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["has_new_or_revised_files"],
+      "properties": {
+        "has_new_or_revised_files": {
+          "type": "boolean"
+        },
+        "diff_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "new_count",
+            "revised_count",
+            "duplicate_count",
+            "superseded_count",
+            "rejected_count"
+          ],
+          "properties": {
+            "new_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "revised_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "duplicate_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "superseded_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rejected_count": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "validation": {
+      "$ref": "#/$defs/stage"
+    },
+    "staging": {
+      "$ref": "#/$defs/stage"
+    },
+    "promotion": {
+      "$ref": "#/$defs/stage"
+    },
+    "verification": {
+      "$ref": "#/$defs/stage"
+    },
+    "trocco": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "should_trigger",
+        "trigger_preconditions_met",
+        "workflow_id",
+        "status"
+      ],
+      "properties": {
+        "should_trigger": {
+          "type": "boolean"
+        },
+        "trigger_preconditions_met": {
+          "type": "boolean"
+        },
+        "workflow_id": {
+          "const": 44652
+        },
+        "status": {
+          "enum": ["not_triggered", "triggered", "trigger_failed", "skipped"]
+        },
+        "triggered_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "job_id": {
+          "type": ["string", "null"]
+        },
+        "error_message": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "webhook_notification": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "should_notify": {
+          "type": "boolean"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "status": {
+          "enum": ["not_sent", "sent", "failed", "skipped"]
+        },
+        "notification_type": {
+          "enum": [
+            "import_success",
+            "import_success_with_revision",
+            "no_new_files",
+            "duplicate_only",
+            "format_error",
+            "staging_failed",
+            "promotion_failed",
+            "verification_failed",
+            "trocco_triggered",
+            "trocco_trigger_failed"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": ["not_started", "success", "failed", "skipped", "partial_success"]
+        }
+      }
+    }
+  }
+}
