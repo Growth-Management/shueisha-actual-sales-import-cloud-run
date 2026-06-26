@@ -16,6 +16,7 @@ from execution_result_connector import (  # noqa: E402
     build_agent_request_from_execution_results,
     build_run_result_from_execution_results,
 )
+from manifest_diff import build_manifest_rows, detected_actions_by_file_id  # noqa: E402
 from pipeline_clients import (  # noqa: E402
     BigQueryClient,
     DriveClient,
@@ -25,6 +26,7 @@ from pipeline_clients import (  # noqa: E402
     TroccoClient,
 )
 from run_result_mapper import build_payload_from_run_result  # noqa: E402
+from validation import build_validation_results  # noqa: E402
 
 
 def execute_pipeline_to_agent_request(
@@ -72,15 +74,33 @@ def execute_pipeline(
     trocco_client = trocco_client or TroccoApiClient()
 
     drive_request = _optional_dict(request_body, "drive") or {}
-    manifest_request = _required_dict(request_body, "manifest")
+    manifest_request = _optional_dict(request_body, "manifest") or {}
     validation_request = _optional_dict(request_body, "validation") or {}
     bigquery_request = _optional_dict(request_body, "bigquery") or {}
     webhook_request = _optional_dict(request_body, "webhook") or {}
 
     drive_files = _drive_files(provider=provider, drive_request=drive_request, drive_client=drive_client)
-    load_results = bigquery_client.run_load_jobs(_list_from(bigquery_request, "load_jobs"))
-    promotion_results = bigquery_client.run_promotion(_list_from(bigquery_request, "promotion_operations", "operations"))
-    verification_results = bigquery_client.run_verification(_list_from(bigquery_request, "verification_checks"))
+    manifest_rows = _manifest_rows(
+        provider=provider,
+        sales_yyyymm=sales_yyyymm,
+        drive_files=drive_files,
+        manifest_request=manifest_request,
+    )
+    validation_results = _validation_results(
+        provider=provider,
+        sales_yyyymm=sales_yyyymm,
+        manifest_rows=manifest_rows,
+        validation_request=validation_request,
+    )
+
+    if _has_validation_failure(validation_results) or not _has_new_or_revised(manifest_rows):
+        load_results = []
+        promotion_results = []
+        verification_results = []
+    else:
+        load_results = bigquery_client.run_load_jobs(_list_from(bigquery_request, "load_jobs"))
+        promotion_results = bigquery_client.run_promotion(_list_from(bigquery_request, "promotion_operations", "operations"))
+        verification_results = bigquery_client.run_verification(_list_from(bigquery_request, "verification_checks"))
 
     execution_result = {
         "provider": provider,
@@ -89,13 +109,14 @@ def execute_pipeline(
         "execution_results": {
             "drive": {
                 "files": drive_files,
-                "detected_actions_by_file_id": _optional_dict(drive_request, "detected_actions_by_file_id") or {},
+                "detected_actions_by_file_id": _optional_dict(drive_request, "detected_actions_by_file_id")
+                or detected_actions_by_file_id(manifest_rows),
             },
             "manifest": {
-                "rows": _required_list(manifest_request, "rows", section_name="manifest"),
+                "rows": manifest_rows,
             },
             "validation": {
-                "results": _list_from(validation_request, "results"),
+                "results": validation_results,
             },
             "bigquery": {
                 "load_jobs": load_results,
@@ -130,6 +151,43 @@ def _drive_files(*, provider: str, drive_request: dict[str, Any], drive_client: 
 
     folder_id = drive_request.get("folder_id") or _folder_id_for_provider(provider)
     return drive_client.list_files(folder_id=folder_id)
+
+
+def _manifest_rows(
+    *,
+    provider: str,
+    sales_yyyymm: list[str],
+    drive_files: list[dict[str, Any]],
+    manifest_request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if "rows" in manifest_request:
+        return _required_list(manifest_request, "rows", section_name="manifest")
+    return build_manifest_rows(
+        provider=provider,
+        sales_yyyymm=sales_yyyymm,
+        drive_files=drive_files,
+        existing_rows=_list_from(manifest_request, "existing_rows"),
+    )
+
+
+def _validation_results(
+    *,
+    provider: str,
+    sales_yyyymm: list[str],
+    manifest_rows: list[dict[str, Any]],
+    validation_request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if "results" in validation_request:
+        return _required_list(validation_request, "results", section_name="validation")
+    return build_validation_results(provider=provider, sales_yyyymm=sales_yyyymm, manifest_rows=manifest_rows)
+
+
+def _has_validation_failure(validation_results: list[dict[str, Any]]) -> bool:
+    return any(result.get("status") == "failed" for result in validation_results)
+
+
+def _has_new_or_revised(manifest_rows: list[dict[str, Any]]) -> bool:
+    return any(row.get("detected_action") in {"new", "revised"} for row in manifest_rows)
 
 
 def _trocco_should_run(execution_result: dict[str, Any]) -> bool:
