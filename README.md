@@ -32,11 +32,27 @@ Key files:
 
 ## Next implementation step
 
-Add the actual Cloud Run service code, then wire the run result assembly to:
+The current Cloud Run entrypoint is `src/main.py`.
+
+Available endpoints:
+
+- `GET /healthz`
+- `POST /agent-request`
+
+`POST /agent-request` accepts either a payload object directly or a wrapper object with `payload`. By default it validates and wraps the payload as the agent API request body. Set `finalize_payload: true` to have the service calculate TROCCO trigger fields before wrapping.
+
+The next implementation step is to wire actual Drive / BigQuery / TROCCO run results into:
 
 1. `build_base_payload`
 2. `finalize_payload`
 3. `build_agent_request`
+
+## Local Run
+
+```bash
+pip install -r requirements.txt
+gunicorn --bind :8080 --workers 1 --threads 8 --timeout 0 src.main:app
+```
 
 ## Local Checks
 
