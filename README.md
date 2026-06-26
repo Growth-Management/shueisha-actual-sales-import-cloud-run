@@ -44,7 +44,9 @@ Available endpoints:
 
 `POST /run-result/agent-request` accepts Cloud Run internal run result fields, builds payload v1.0, and returns the agent API request body.
 
-The next implementation step is to replace stubbed run result inputs with actual Drive / BigQuery / TROCCO execution results:
+Adapter helpers for converting step outputs into `run_result` sections are in `src/run_result_adapters.py`.
+
+The next implementation step is to replace stubbed adapter inputs with actual Drive / BigQuery / TROCCO execution results:
 
 1. `build_base_payload`
 2. `finalize_payload`
