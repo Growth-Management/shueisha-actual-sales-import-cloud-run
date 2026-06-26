@@ -127,7 +127,7 @@ def bigquery_promotion_jobs_to_promotion_result(
                 "deleted_row_count": _affected_rows(delete_job, operation.get("deleted_row_count")),
                 "inserted_row_count": _affected_rows(insert_job, operation.get("inserted_row_count")),
                 "status": "failed" if delete_error or insert_error else operation.get("status", "success"),
-                "error_message": delete_error or insert_error,
+                "error_message": delete_error or insert_error or operation.get("error_message"),
             }
         )
 
