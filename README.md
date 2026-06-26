@@ -46,11 +46,14 @@ Available endpoints:
 
 Adapter helpers for converting step outputs into `run_result` sections are in `src/run_result_adapters.py`.
 
-The next implementation step is to replace stubbed adapter inputs with actual Drive / BigQuery / TROCCO execution results:
+Execution result adapters for raw Drive / BigQuery / TROCCO / webhook responses are in `src/execution_result_adapters.py`.
 
-1. `build_base_payload`
-2. `finalize_payload`
-3. `build_agent_request`
+The next implementation step is to call the actual Drive / BigQuery / TROCCO clients and pass their raw responses through:
+
+1. `execution_result_adapters`
+2. `run_result_adapters`
+3. `build_payload_from_run_result`
+4. `build_agent_request`
 
 ## Local Run
 
