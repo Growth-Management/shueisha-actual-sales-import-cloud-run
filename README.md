@@ -38,10 +38,13 @@ Available endpoints:
 
 - `GET /readiness`
 - `POST /agent-request`
+- `POST /run-result/agent-request`
 
 `POST /agent-request` accepts either a payload object directly or a wrapper object with `payload`. By default it validates and wraps the payload as the agent API request body. Set `finalize_payload: true` to have the service calculate TROCCO trigger fields before wrapping.
 
-The next implementation step is to wire actual Drive / BigQuery / TROCCO run results into:
+`POST /run-result/agent-request` accepts Cloud Run internal run result fields, builds payload v1.0, and returns the agent API request body.
+
+The next implementation step is to replace stubbed run result inputs with actual Drive / BigQuery / TROCCO execution results:
 
 1. `build_base_payload`
 2. `finalize_payload`
