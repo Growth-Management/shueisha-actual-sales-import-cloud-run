@@ -29,7 +29,13 @@ class FakeDriveClient:
 
 
 class FakeBigQueryClient:
+    def __init__(self):
+        self.load_called = False
+        self.promotion_called = False
+        self.verification_called = False
+
     def run_load_jobs(self, load_jobs):
+        self.load_called = True
         return [
             {
                 "job_id": "bq_load_001",
@@ -40,6 +46,7 @@ class FakeBigQueryClient:
         ]
 
     def run_promotion(self, operations):
+        self.promotion_called = True
         return [
             {
                 "sales_yyyymm": "202606",
@@ -49,6 +56,7 @@ class FakeBigQueryClient:
         ]
 
     def run_verification(self, checks):
+        self.verification_called = True
         return [
             {
                 "name": "production_row_count_matches_staging",
@@ -130,6 +138,13 @@ def _request(validation_status="success"):
     }
 
 
+def _request_without_manifest_or_validation():
+    request = _request()
+    request.pop("manifest")
+    request.pop("validation")
+    return request
+
+
 def test_execute_pipeline_triggers_trocco_when_preconditions_pass():
     drive_client = FakeDriveClient()
     trocco_client = FakeTroccoClient()
@@ -176,3 +191,76 @@ def test_execute_pipeline_maps_trocco_exception_to_trigger_failed():
     assert payload["trocco"]["should_trigger"] is True
     assert payload["trocco"]["status"] == "trigger_failed"
     assert payload["trocco"]["error_message"] == "trocco unavailable"
+
+
+def test_execute_pipeline_builds_manifest_and_validation_results():
+    request_body = execute_pipeline_to_agent_request(
+        _request_without_manifest_or_validation(),
+        drive_client=FakeDriveClient(),
+        bigquery_client=FakeBigQueryClient(),
+        trocco_client=FakeTroccoClient(),
+    )
+    payload = request_body["input"]["payload"]
+
+    assert payload["manifest_diff"]["records"][0]["detected_action"] == "new"
+    assert payload["validation"]["status"] == "success"
+    assert payload["drive_source"]["detected_files"][0]["detected_action"] == "new"
+
+
+def test_execute_pipeline_skips_bigquery_when_generated_validation_fails():
+    class InvalidDriveClient:
+        def list_files(self, *, folder_id):
+            return [
+                {
+                    "id": "apple_file_invalid",
+                    "name": "202606_unknown.xlsx",
+                    "md5Checksum": "md5-invalid",
+                }
+            ]
+
+    bigquery_client = FakeBigQueryClient()
+    request = _request_without_manifest_or_validation()
+
+    request_body = execute_pipeline_to_agent_request(
+        request,
+        drive_client=InvalidDriveClient(),
+        bigquery_client=bigquery_client,
+        trocco_client=FakeTroccoClient(),
+    )
+    payload = request_body["input"]["payload"]
+
+    assert bigquery_client.load_called is False
+    assert payload["manifest_diff"]["records"][0]["detected_action"] == "invalid"
+    assert payload["validation"]["status"] == "failed"
+    assert payload["staging"]["status"] == "not_started"
+
+
+def test_execute_pipeline_skips_bigquery_for_duplicate_only_manifest():
+    bigquery_client = FakeBigQueryClient()
+    request = _request_without_manifest_or_validation()
+    request["manifest"] = {
+        "existing_rows": [
+            {
+                "provider": "apple",
+                "sales_yyyymm": "202606",
+                "file_id": "apple_file_001",
+                "file_name": "202606_ICE納品.xlsx",
+                "md5_checksum": "md5-apple-001",
+                "delivery_type": "ICE納品",
+                "is_active_after": True,
+            }
+        ]
+    }
+
+    request_body = execute_pipeline_to_agent_request(
+        request,
+        drive_client=FakeDriveClient(),
+        bigquery_client=bigquery_client,
+        trocco_client=FakeTroccoClient(),
+    )
+    payload = request_body["input"]["payload"]
+
+    assert bigquery_client.load_called is False
+    assert payload["manifest_diff"]["diff_summary"]["duplicate_count"] == 1
+    assert payload["staging"]["status"] == "not_started"
+    assert payload["trocco"]["status"] == "not_triggered"
