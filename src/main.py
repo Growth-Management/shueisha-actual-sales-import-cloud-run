@@ -18,6 +18,7 @@ from payload_builder import (  # noqa: E402
     finalize_payload,
     validate_payload,
 )
+from run_result_mapper import build_payload_from_run_result  # noqa: E402
 
 
 app = Flask(__name__)
@@ -69,6 +70,30 @@ def agent_request():
                 error_message=body.get("webhook_error_message"),
             )
 
+        request_body = build_agent_request(
+            payload,
+            requested_output=body.get("requested_output", "run_judgment"),
+            include_notification_draft=_bool_from_body(body, "include_notification_draft", True),
+            include_failure_analysis=_bool_from_body(body, "include_failure_analysis", False),
+        )
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+    return jsonify(request_body)
+
+
+@app.post("/run-result/agent-request")
+def run_result_agent_request():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _error_response("request body must be a JSON object")
+
+    run_result = body.get("run_result", body)
+    if not isinstance(run_result, dict):
+        return _error_response("run_result must be a JSON object")
+
+    try:
+        payload = build_payload_from_run_result(run_result)
         request_body = build_agent_request(
             payload,
             requested_output=body.get("requested_output", "run_judgment"),
