@@ -39,6 +39,7 @@ Available endpoints:
 - `GET /readiness`
 - `POST /agent-request`
 - `POST /run-result/agent-request`
+- `POST /execution-results/agent-request`
 
 `POST /agent-request` accepts either a payload object directly or a wrapper object with `payload`. By default it validates and wraps the payload as the agent API request body. Set `finalize_payload: true` to have the service calculate TROCCO trigger fields before wrapping.
 
@@ -48,12 +49,54 @@ Adapter helpers for converting step outputs into `run_result` sections are in `s
 
 Execution result adapters for raw Drive / BigQuery / TROCCO / webhook responses are in `src/execution_result_adapters.py`.
 
-The next implementation step is to call the actual Drive / BigQuery / TROCCO clients and pass their raw responses through:
+`POST /execution-results/agent-request` accepts actual execution-result-shaped values from Drive polling, BigQuery load / promotion / verification, and TROCCO trigger execution. It connects those raw results through:
 
 1. `execution_result_adapters`
 2. `run_result_adapters`
 3. `build_payload_from_run_result`
 4. `build_agent_request`
+
+Expected top-level shape:
+
+```json
+{
+  "provider": "apple",
+  "sales_yyyymm": ["202606"],
+  "run_context": {
+    "environment": "prod",
+    "trigger_source": "cloud_run_hourly",
+    "run_id": "2026-06-26T10:00:00Z__apple__001",
+    "run_started_at": "2026-06-26T10:00:00Z",
+    "run_finished_at": "2026-06-26T10:03:42Z",
+    "is_test": false
+  },
+  "execution_results": {
+    "drive": {
+      "files": [],
+      "detected_actions_by_file_id": {}
+    },
+    "manifest": {
+      "rows": []
+    },
+    "validation": {
+      "results": []
+    },
+    "bigquery": {
+      "load_jobs": [],
+      "promotion_operations": [],
+      "verification_checks": []
+    },
+    "trocco": {
+      "response": {
+        "status_code": 201,
+        "body": {
+          "job_id": "trocco_job_id"
+        }
+      }
+    }
+  }
+}
+```
 
 ## Local Run
 
