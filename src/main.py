@@ -19,6 +19,7 @@ from payload_builder import (  # noqa: E402
     validate_payload,
 )
 from execution_result_connector import build_agent_request_from_execution_results  # noqa: E402
+from pipeline_executor import execute_pipeline_to_agent_request  # noqa: E402
 from run_result_mapper import build_payload_from_run_result  # noqa: E402
 
 
@@ -124,6 +125,20 @@ def execution_results_agent_request():
             include_notification_draft=_bool_from_body(body, "include_notification_draft", True),
             include_failure_analysis=_bool_from_body(body, "include_failure_analysis", False),
         )
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+    return jsonify(request_body)
+
+
+@app.post("/execute/agent-request")
+def execute_agent_request():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _error_response("request body must be a JSON object")
+
+    try:
+        request_body = execute_pipeline_to_agent_request(body)
     except ValueError as exc:
         return _error_response(str(exc))
 
