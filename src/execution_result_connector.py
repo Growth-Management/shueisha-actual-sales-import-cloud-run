@@ -77,6 +77,8 @@ def build_run_result_from_execution_results(execution_result: dict[str, Any]) ->
         "verification": verification_outputs_to_verification_result(verification_checks),
         "trocco_result": _trocco_result(trocco),
     }
+    if "write_result" in manifest:
+        run_result["manifest_diff"]["write_result"] = deepcopy(manifest["write_result"])
 
     if "response" in webhook:
         run_result.update(webhook_response_to_webhook_result(webhook["response"]))
