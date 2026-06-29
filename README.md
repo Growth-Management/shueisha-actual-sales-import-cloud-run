@@ -104,16 +104,20 @@ Expected top-level shape:
 1. Drive folder polling
 2. Manifest diff generation
 3. Validation result generation
-4. BigQuery load jobs
-5. BigQuery production promotion jobs
-6. BigQuery verification checks
-7. TROCCO workflow trigger only when payload v1.0 preconditions pass
+4. Drive file upload to GCS landing
+5. BigQuery load jobs
+6. BigQuery production promotion jobs
+7. BigQuery verification checks
+8. TROCCO workflow trigger only when payload v1.0 preconditions pass
 
 The request can include prebuilt `manifest.rows` and `validation.results`. If omitted, Cloud Run builds them from Drive file metadata and optional `manifest.existing_rows`.
 
 BigQuery load / promotion / verification is skipped when validation fails or when the manifest diff has no `new` or `revised` files.
 
 When `manifest.existing_rows` is omitted, Cloud Run fetches active rows from `ice-sh.ice_sh_process.drive_sales_import_manifest`. Generated manifest rows are written back after execution unless `manifest.write_enabled` is `false`.
+
+When `landing.bucket` is provided, Cloud Run uploads `new` / `revised` Drive files to GCS and injects the generated `gs://...` URI into matching BigQuery load jobs.
+If a GCS landing upload fails, staging is marked as failed and promotion / verification / TROCCO are skipped.
 
 ```json
 {
@@ -132,8 +136,17 @@ When `manifest.existing_rows` is omitted, Cloud Run fetches active rows from `ic
     "fetch_existing_rows": true,
     "write_enabled": true
   },
+  "landing": {
+    "bucket": "your-gcs-landing-bucket",
+    "prefix": "drive-sales-import"
+  },
   "bigquery": {
-    "load_jobs": [],
+    "load_jobs": [
+      {
+        "file_id": "drive_file_id",
+        "destination_table": "ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg"
+      }
+    ],
     "promotion_operations": [],
     "verification_checks": []
   },
