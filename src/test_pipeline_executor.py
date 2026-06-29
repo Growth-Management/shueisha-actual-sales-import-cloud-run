@@ -313,24 +313,33 @@ def test_execute_pipeline_generates_bigquery_plan_from_provider_defaults():
         trocco_client=FakeTroccoClient(),
     )
 
-    assert bigquery_client.load_jobs == [
-        {
-            "destination_table": "ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg",
-            "job_config": {
-                "source_format": "CSV",
-                "autodetect": True,
-                "skip_leading_rows": 2,
-                "write_disposition": "WRITE_APPEND",
-                "field_delimiter": ",",
-                "allow_quoted_newlines": True,
-                "encoding": "UTF-8",
-            },
-            "file_id": "apple_file_001",
-            "sales_yyyymm": "202606",
-            "source_uris": [
-                "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.csv"
-            ],
-        }
+    assert bigquery_client.load_jobs[0] == {
+        "destination_table": "ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg",
+        "job_config": {
+            "source_format": "CSV",
+            "autodetect": False,
+            "schema": bigquery_client.load_jobs[0]["job_config"]["schema"],
+            "skip_leading_rows": 2,
+            "write_disposition": "WRITE_APPEND",
+            "field_delimiter": ",",
+            "allow_quoted_newlines": True,
+            "encoding": "UTF-8",
+        },
+        "file_id": "apple_file_001",
+        "sales_yyyymm": "202606",
+        "source_uris": [
+            "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.csv"
+        ],
+    }
+    assert bigquery_client.load_jobs[0]["job_config"]["schema"][:8] == [
+        {"name": "sales_yyyymm", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "start_date", "type": "DATE", "mode": "NULLABLE"},
+        {"name": "end_date", "type": "DATE", "mode": "NULLABLE"},
+        {"name": "upc", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "isrc_isbn", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "vendor_identifier", "type": "STRING", "mode": "NULLABLE"},
+        {"name": "quantity", "type": "INT64", "mode": "NULLABLE"},
+        {"name": "partner_share", "type": "NUMERIC", "mode": "NULLABLE"},
     ]
     assert bigquery_client.promotion_operations == [
         {
