@@ -22,6 +22,7 @@ from pipeline_clients import (  # noqa: E402
     DriveClient,
     GoogleBigQueryClient,
     GoogleDriveClient,
+    MANIFEST_TABLE,
     TroccoApiClient,
     TroccoClient,
 )
@@ -85,6 +86,7 @@ def execute_pipeline(
         sales_yyyymm=sales_yyyymm,
         drive_files=drive_files,
         manifest_request=manifest_request,
+        bigquery_client=bigquery_client,
     )
     validation_results = _validation_results(
         provider=provider,
@@ -139,6 +141,13 @@ def execute_pipeline(
             trocco_response = {"status_code": 0, "body": {"message": str(exc)}}
         execution_result["execution_results"]["trocco"] = {"response": trocco_response}
 
+    execution_result["execution_results"]["manifest"]["write_result"] = _write_manifest_rows(
+        manifest_rows=manifest_rows,
+        manifest_request=manifest_request,
+        bigquery_client=bigquery_client,
+        run_context=run_context,
+    )
+
     return execution_result
 
 
@@ -159,14 +168,55 @@ def _manifest_rows(
     sales_yyyymm: list[str],
     drive_files: list[dict[str, Any]],
     manifest_request: dict[str, Any],
+    bigquery_client: BigQueryClient,
 ) -> list[dict[str, Any]]:
     if "rows" in manifest_request:
         return _required_list(manifest_request, "rows", section_name="manifest")
+    existing_rows = _existing_manifest_rows(
+        provider=provider,
+        sales_yyyymm=sales_yyyymm,
+        manifest_request=manifest_request,
+        bigquery_client=bigquery_client,
+    )
     return build_manifest_rows(
         provider=provider,
         sales_yyyymm=sales_yyyymm,
         drive_files=drive_files,
-        existing_rows=_list_from(manifest_request, "existing_rows"),
+        existing_rows=existing_rows,
+    )
+
+
+def _existing_manifest_rows(
+    *,
+    provider: str,
+    sales_yyyymm: list[str],
+    manifest_request: dict[str, Any],
+    bigquery_client: BigQueryClient,
+) -> list[dict[str, Any]]:
+    if "existing_rows" in manifest_request:
+        return _required_list(manifest_request, "existing_rows", section_name="manifest")
+    if manifest_request.get("fetch_existing_rows", True) is False:
+        return []
+    return bigquery_client.fetch_manifest_existing_rows(
+        provider=provider,
+        sales_yyyymm=sales_yyyymm,
+        table=manifest_request.get("table", MANIFEST_TABLE),
+    )
+
+
+def _write_manifest_rows(
+    *,
+    manifest_rows: list[dict[str, Any]],
+    manifest_request: dict[str, Any],
+    bigquery_client: BigQueryClient,
+    run_context: dict[str, Any],
+) -> dict[str, Any]:
+    if manifest_request.get("write_enabled", True) is False:
+        return {"status": "skipped", "inserted_count": 0, "table": manifest_request.get("table", MANIFEST_TABLE), "error_message": None}
+    return bigquery_client.write_manifest_rows(
+        manifest_rows,
+        table=manifest_request.get("table", MANIFEST_TABLE),
+        run_context=run_context,
     )
 
 
