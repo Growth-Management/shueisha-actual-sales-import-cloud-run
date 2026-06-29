@@ -14,6 +14,7 @@ RUN_CONTEXT = {
 class FakeDriveClient:
     def __init__(self):
         self.folder_ids = []
+        self.downloaded_file_ids = []
 
     def list_files(self, *, folder_id):
         self.folder_ids.append(folder_id)
@@ -27,6 +28,31 @@ class FakeDriveClient:
             }
         ]
 
+    def download_file(self, *, file_id):
+        self.downloaded_file_ids.append(file_id)
+        return b"file-bytes"
+
+
+class FakeStorageClient:
+    def __init__(self):
+        self.uploads = []
+
+    def upload_bytes(self, *, bucket_name, object_name, data, content_type=None):
+        self.uploads.append(
+            {
+                "bucket_name": bucket_name,
+                "object_name": object_name,
+                "data": data,
+                "content_type": content_type,
+            }
+        )
+        return f"gs://{bucket_name}/{object_name}"
+
+
+class FailingStorageClient:
+    def upload_bytes(self, *, bucket_name, object_name, data, content_type=None):
+        raise RuntimeError("gcs unavailable")
+
 
 class FakeBigQueryClient:
     def __init__(self):
@@ -35,6 +61,7 @@ class FakeBigQueryClient:
         self.verification_called = False
         self.fetch_manifest_called = False
         self.written_manifest_rows = []
+        self.load_jobs = []
 
     def fetch_manifest_existing_rows(self, *, provider, sales_yyyymm, table="ice-sh.ice_sh_process.drive_sales_import_manifest"):
         self.fetch_manifest_called = True
@@ -51,6 +78,7 @@ class FakeBigQueryClient:
 
     def run_load_jobs(self, load_jobs):
         self.load_called = True
+        self.load_jobs = load_jobs
         return [
             {
                 "job_id": "bq_load_001",
@@ -130,6 +158,7 @@ def _request(validation_status="success"):
         "bigquery": {
             "load_jobs": [
                 {
+                    "file_id": "apple_file_001",
                     "source_uris": ["gs://landing/apple/202606_ICE納品.xlsx"],
                     "destination_table": "ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg",
                 }
@@ -162,17 +191,23 @@ def _request_without_manifest_or_validation():
 
 def test_execute_pipeline_triggers_trocco_when_preconditions_pass():
     drive_client = FakeDriveClient()
+    storage_client = FakeStorageClient()
+    bigquery_client = FakeBigQueryClient()
     trocco_client = FakeTroccoClient()
 
     request_body = execute_pipeline_to_agent_request(
         _request(),
         drive_client=drive_client,
-        bigquery_client=FakeBigQueryClient(),
+        storage_client=storage_client,
+        bigquery_client=bigquery_client,
         trocco_client=trocco_client,
     )
     payload = request_body["input"]["payload"]
 
     assert drive_client.folder_ids == ["1MSyU3QZZszTqZO55z2iVe_3JcMvwWbDu"]
+    assert drive_client.downloaded_file_ids == []
+    assert storage_client.uploads == []
+    assert bigquery_client.load_jobs[0]["source_uris"] == ["gs://landing/apple/202606_ICE納品.xlsx"]
     assert payload["trocco"]["status"] == "triggered"
     assert payload["trocco"]["job_id"] == "trocco_job_001"
     assert trocco_client.calls[0]["workflow_id"] == 44652
@@ -209,10 +244,16 @@ def test_execute_pipeline_maps_trocco_exception_to_trigger_failed():
 
 
 def test_execute_pipeline_builds_manifest_and_validation_results():
+    drive_client = FakeDriveClient()
+    storage_client = FakeStorageClient()
     bigquery_client = FakeBigQueryClient()
+    request = _request_without_manifest_or_validation()
+    request["landing"] = {"bucket": "sales-landing", "prefix": "drive-import"}
+
     request_body = execute_pipeline_to_agent_request(
-        _request_without_manifest_or_validation(),
-        drive_client=FakeDriveClient(),
+        request,
+        drive_client=drive_client,
+        storage_client=storage_client,
         bigquery_client=bigquery_client,
         trocco_client=FakeTroccoClient(),
     )
@@ -220,6 +261,11 @@ def test_execute_pipeline_builds_manifest_and_validation_results():
 
     assert bigquery_client.fetch_manifest_called is True
     assert bigquery_client.written_manifest_rows[0]["detected_action"] == "new"
+    assert drive_client.downloaded_file_ids == ["apple_file_001"]
+    assert storage_client.uploads[0]["bucket_name"] == "sales-landing"
+    assert bigquery_client.load_jobs[0]["source_uris"] == [
+        "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.xlsx"
+    ]
     assert payload["manifest_diff"]["records"][0]["detected_action"] == "new"
     assert payload["manifest_diff"]["write_result"]["status"] == "success"
     assert payload["validation"]["status"] == "success"
@@ -300,3 +346,23 @@ def test_execute_pipeline_can_disable_manifest_write():
 
     assert bigquery_client.written_manifest_rows == []
     assert payload["manifest_diff"]["write_result"]["status"] == "skipped"
+
+
+def test_execute_pipeline_maps_landing_upload_failure_to_staging_failed():
+    bigquery_client = FakeBigQueryClient()
+    request = _request_without_manifest_or_validation()
+    request["landing"] = {"bucket": "sales-landing", "prefix": "drive-import"}
+
+    request_body = execute_pipeline_to_agent_request(
+        request,
+        drive_client=FakeDriveClient(),
+        storage_client=FailingStorageClient(),
+        bigquery_client=bigquery_client,
+        trocco_client=FakeTroccoClient(),
+    )
+    payload = request_body["input"]["payload"]
+
+    assert bigquery_client.load_called is False
+    assert payload["staging"]["status"] == "failed"
+    assert payload["staging"]["landing_uploads"][0]["status"] == "failed"
+    assert payload["trocco"]["status"] == "not_triggered"
