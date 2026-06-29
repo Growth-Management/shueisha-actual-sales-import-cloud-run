@@ -114,6 +114,8 @@ The request can include prebuilt `manifest.rows` and `validation.results`. If om
 
 BigQuery load / promotion / verification is skipped when validation fails or when the manifest diff has no `new` or `revised` files.
 
+Use `execution_mode: "staging_load_only"` to run only the safe staging-load path. This mode still performs Drive polling, manifest diff, validation, Drive download, file normalization, GCS landing upload, BigQuery staging load, and manifest write. It stops before production `DELETE / INSERT`, production verification, and TROCCO workflow trigger.
+
 When `manifest.existing_rows` is omitted, Cloud Run fetches active rows from `ice-sh.ice_sh_process.drive_sales_import_manifest`. Generated manifest rows are written back after execution unless `manifest.write_enabled` is `false`.
 
 When `landing.bucket` is provided, Cloud Run normalizes `new` / `revised` Drive files to BigQuery-loadable CSV, uploads them to GCS, and injects the generated `gs://...` URI into matching BigQuery load jobs.
@@ -157,6 +159,7 @@ BigQuery schema reconciliation helpers are in `src/bigquery_schema.py`:
 {
   "provider": "apple",
   "sales_yyyymm": ["202606"],
+  "execution_mode": "staging_load_only",
   "run_context": {
     "environment": "prod",
     "trigger_source": "cloud_run_hourly",
@@ -193,6 +196,23 @@ BigQuery schema reconciliation helpers are in `src/bigquery_schema.py`:
   "trocco_payload": {}
 }
 ```
+
+## Staging Load Test Run
+
+For a Cloud Scheduler manual test, point the HTTP target at the deployed Cloud Run service path:
+
+```text
+POST https://<service-url>/execute/agent-request
+```
+
+Use a request body with `execution_mode: "staging_load_only"`. A successful staging-only run should return:
+
+- `staging.status`: `success`
+- `promotion.status`: `not_started`
+- `verification.status`: `not_started`
+- `trocco.status`: `not_triggered`
+
+Only switch to `execution_mode: "full"` or omit `execution_mode` after the staging load result is verified.
 
 ## Local Run
 
