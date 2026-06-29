@@ -33,6 +33,21 @@ class FakeBigQueryClient:
         self.load_called = False
         self.promotion_called = False
         self.verification_called = False
+        self.fetch_manifest_called = False
+        self.written_manifest_rows = []
+
+    def fetch_manifest_existing_rows(self, *, provider, sales_yyyymm, table="ice-sh.ice_sh_process.drive_sales_import_manifest"):
+        self.fetch_manifest_called = True
+        return []
+
+    def write_manifest_rows(self, rows, *, table="ice-sh.ice_sh_process.drive_sales_import_manifest", run_context=None):
+        self.written_manifest_rows = rows
+        return {
+            "status": "success",
+            "inserted_count": len(rows),
+            "table": table,
+            "error_message": None,
+        }
 
     def run_load_jobs(self, load_jobs):
         self.load_called = True
@@ -194,15 +209,19 @@ def test_execute_pipeline_maps_trocco_exception_to_trigger_failed():
 
 
 def test_execute_pipeline_builds_manifest_and_validation_results():
+    bigquery_client = FakeBigQueryClient()
     request_body = execute_pipeline_to_agent_request(
         _request_without_manifest_or_validation(),
         drive_client=FakeDriveClient(),
-        bigquery_client=FakeBigQueryClient(),
+        bigquery_client=bigquery_client,
         trocco_client=FakeTroccoClient(),
     )
     payload = request_body["input"]["payload"]
 
+    assert bigquery_client.fetch_manifest_called is True
+    assert bigquery_client.written_manifest_rows[0]["detected_action"] == "new"
     assert payload["manifest_diff"]["records"][0]["detected_action"] == "new"
+    assert payload["manifest_diff"]["write_result"]["status"] == "success"
     assert payload["validation"]["status"] == "success"
     assert payload["drive_source"]["detected_files"][0]["detected_action"] == "new"
 
@@ -264,3 +283,20 @@ def test_execute_pipeline_skips_bigquery_for_duplicate_only_manifest():
     assert payload["manifest_diff"]["diff_summary"]["duplicate_count"] == 1
     assert payload["staging"]["status"] == "not_started"
     assert payload["trocco"]["status"] == "not_triggered"
+
+
+def test_execute_pipeline_can_disable_manifest_write():
+    bigquery_client = FakeBigQueryClient()
+    request = _request_without_manifest_or_validation()
+    request["manifest"] = {"write_enabled": False}
+
+    request_body = execute_pipeline_to_agent_request(
+        request,
+        drive_client=FakeDriveClient(),
+        bigquery_client=bigquery_client,
+        trocco_client=FakeTroccoClient(),
+    )
+    payload = request_body["input"]["payload"]
+
+    assert bigquery_client.written_manifest_rows == []
+    assert payload["manifest_diff"]["write_result"]["status"] == "skipped"
