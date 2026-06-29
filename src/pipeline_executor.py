@@ -249,6 +249,8 @@ def _landing_uploads(
         try:
             data = drive_client.download_file(file_id=file_id)
             normalized = normalize_drive_file(
+                provider=provider,
+                sales_yyyymm=month,
                 file_name=str(file_name),
                 mime_type=mime_type,
                 data=data,
@@ -266,6 +268,9 @@ def _landing_uploads(
                     "normalized_file_name": normalized["file_name"],
                     "normalized_format": normalized["format"],
                     "was_converted": normalized["was_converted"],
+                    "normalized_columns": normalized.get("columns"),
+                    "normalized_row_count": normalized.get("row_count"),
+                    "header_row_index": normalized.get("header_row_index"),
                     "sales_yyyymm": month,
                     "gcs_uri": gcs_uri,
                     "bucket": bucket,
@@ -282,6 +287,9 @@ def _landing_uploads(
                     "normalized_file_name": None,
                     "normalized_format": None,
                     "was_converted": False,
+                    "normalized_columns": None,
+                    "normalized_row_count": 0,
+                    "header_row_index": None,
                     "sales_yyyymm": month,
                     "gcs_uri": None,
                     "bucket": bucket,
