@@ -21,8 +21,10 @@ from pipeline_clients import (  # noqa: E402
     BigQueryClient,
     DriveClient,
     GoogleBigQueryClient,
+    GoogleCloudStorageClient,
     GoogleDriveClient,
     MANIFEST_TABLE,
+    StorageClient,
     TroccoApiClient,
     TroccoClient,
 )
@@ -34,12 +36,14 @@ def execute_pipeline_to_agent_request(
     request_body: dict[str, Any],
     *,
     drive_client: DriveClient | None = None,
+    storage_client: StorageClient | None = None,
     bigquery_client: BigQueryClient | None = None,
     trocco_client: TroccoClient | None = None,
 ) -> dict[str, Any]:
     execution_result = execute_pipeline(
         request_body,
         drive_client=drive_client,
+        storage_client=storage_client,
         bigquery_client=bigquery_client,
         trocco_client=trocco_client,
     )
@@ -55,6 +59,7 @@ def execute_pipeline(
     request_body: dict[str, Any],
     *,
     drive_client: DriveClient | None = None,
+    storage_client: StorageClient | None = None,
     bigquery_client: BigQueryClient | None = None,
     trocco_client: TroccoClient | None = None,
 ) -> dict[str, Any]:
@@ -71,10 +76,12 @@ def execute_pipeline(
         raise ValueError("sales_yyyymm must be a list")
 
     drive_client = drive_client or GoogleDriveClient()
+    storage_client = storage_client or GoogleCloudStorageClient()
     bigquery_client = bigquery_client or GoogleBigQueryClient()
     trocco_client = trocco_client or TroccoApiClient()
 
     drive_request = _optional_dict(request_body, "drive") or {}
+    landing_request = _optional_dict(request_body, "landing") or {}
     manifest_request = _optional_dict(request_body, "manifest") or {}
     validation_request = _optional_dict(request_body, "validation") or {}
     bigquery_request = _optional_dict(request_body, "bigquery") or {}
@@ -96,13 +103,33 @@ def execute_pipeline(
     )
 
     if _has_validation_failure(validation_results) or not _has_new_or_revised(manifest_rows):
+        landing_uploads = []
         load_results = []
         promotion_results = []
         verification_results = []
     else:
-        load_results = bigquery_client.run_load_jobs(_list_from(bigquery_request, "load_jobs"))
-        promotion_results = bigquery_client.run_promotion(_list_from(bigquery_request, "promotion_operations", "operations"))
-        verification_results = bigquery_client.run_verification(_list_from(bigquery_request, "verification_checks"))
+        landing_uploads = _landing_uploads(
+            provider=provider,
+            sales_yyyymm=sales_yyyymm,
+            drive_files=drive_files,
+            manifest_rows=manifest_rows,
+            landing_request=landing_request,
+            drive_client=drive_client,
+            storage_client=storage_client,
+        )
+        if _has_landing_upload_failure(landing_uploads):
+            load_results = _failed_landing_load_results(landing_uploads)
+            promotion_results = []
+            verification_results = []
+        else:
+            load_jobs = _load_jobs(
+                provider=provider,
+                bigquery_request=bigquery_request,
+                landing_uploads=landing_uploads,
+            )
+            load_results = bigquery_client.run_load_jobs(load_jobs)
+            promotion_results = bigquery_client.run_promotion(_list_from(bigquery_request, "promotion_operations", "operations"))
+            verification_results = bigquery_client.run_verification(_list_from(bigquery_request, "verification_checks"))
 
     execution_result = {
         "provider": provider,
@@ -122,6 +149,7 @@ def execute_pipeline(
             },
             "bigquery": {
                 "load_jobs": load_results,
+                "landing_uploads": landing_uploads,
                 "target_sales_yyyymm": _list_from(bigquery_request, "target_sales_yyyymm", default=sales_yyyymm),
                 "promotion_operations": promotion_results,
                 "verification_checks": verification_results,
@@ -160,6 +188,136 @@ def _drive_files(*, provider: str, drive_request: dict[str, Any], drive_client: 
 
     folder_id = drive_request.get("folder_id") or _folder_id_for_provider(provider)
     return drive_client.list_files(folder_id=folder_id)
+
+
+def _landing_uploads(
+    *,
+    provider: str,
+    sales_yyyymm: list[str],
+    drive_files: list[dict[str, Any]],
+    manifest_rows: list[dict[str, Any]],
+    landing_request: dict[str, Any],
+    drive_client: DriveClient,
+    storage_client: StorageClient,
+) -> list[dict[str, Any]]:
+    bucket = landing_request.get("bucket")
+    if not bucket:
+        return []
+
+    prefix = str(landing_request.get("prefix") or "landing/drive-sales-import").strip("/")
+    uploadable_file_ids = {
+        row.get("file_id")
+        for row in manifest_rows
+        if row.get("detected_action") in {"new", "revised"} and row.get("sales_yyyymm") in sales_yyyymm
+    }
+    files_by_id = {str(_file_value(file_obj, "id", "file_id")): file_obj for file_obj in drive_files}
+    uploads: list[dict[str, Any]] = []
+
+    for file_id in sorted(str(file_id) for file_id in uploadable_file_ids if file_id):
+        file_obj = files_by_id.get(file_id)
+        if not file_obj:
+            continue
+        file_name = _file_value(file_obj, "name", "file_name")
+        mime_type = _file_value(file_obj, "mimeType", "mime_type")
+        month = _manifest_month_for_file(file_id, manifest_rows)
+        object_name = "/".join(
+            [
+                prefix,
+                provider,
+                str(month or "unknown"),
+                file_id,
+                _safe_object_name(str(file_name)),
+            ]
+        )
+        try:
+            data = drive_client.download_file(file_id=file_id)
+            gcs_uri = storage_client.upload_bytes(
+                bucket_name=str(bucket),
+                object_name=object_name,
+                data=data,
+                content_type=mime_type,
+            )
+            uploads.append(
+                {
+                    "file_id": file_id,
+                    "file_name": file_name,
+                    "sales_yyyymm": month,
+                    "gcs_uri": gcs_uri,
+                    "bucket": bucket,
+                    "object_name": object_name,
+                    "status": "success",
+                    "error_message": None,
+                }
+            )
+        except Exception as exc:
+            uploads.append(
+                {
+                    "file_id": file_id,
+                    "file_name": file_name,
+                    "sales_yyyymm": month,
+                    "gcs_uri": None,
+                    "bucket": bucket,
+                    "object_name": object_name,
+                    "status": "failed",
+                    "error_message": str(exc),
+                }
+            )
+
+    return uploads
+
+
+def _load_jobs(
+    *,
+    provider: str,
+    bigquery_request: dict[str, Any],
+    landing_uploads: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    provided_jobs = _list_from(bigquery_request, "load_jobs")
+    if not landing_uploads:
+        return provided_jobs
+
+    jobs_by_file_id = {
+        str(job.get("file_id")): deepcopy(job)
+        for job in provided_jobs
+        if job.get("file_id") is not None
+    }
+    default_template = dict(bigquery_request.get("load_job_template") or {})
+    destination_table = default_template.get("destination_table") or _staging_table_for_provider(provider)
+    generated_jobs: list[dict[str, Any]] = []
+
+    for upload in landing_uploads:
+        if upload.get("status") != "success":
+            continue
+        file_id = str(upload["file_id"])
+        job = jobs_by_file_id.pop(file_id, deepcopy(default_template))
+        job["file_id"] = file_id
+        job["sales_yyyymm"] = upload.get("sales_yyyymm")
+        job["source_uris"] = [upload["gcs_uri"]]
+        job.setdefault("destination_table", destination_table)
+        generated_jobs.append(job)
+
+    generated_jobs.extend(jobs_by_file_id.values())
+    generated_jobs.extend(job for job in provided_jobs if job.get("file_id") is None)
+    return generated_jobs
+
+
+def _has_landing_upload_failure(landing_uploads: list[dict[str, Any]]) -> bool:
+    return any(upload.get("status") == "failed" for upload in landing_uploads)
+
+
+def _failed_landing_load_results(landing_uploads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "file_id": upload.get("file_id"),
+            "sales_yyyymm": upload.get("sales_yyyymm"),
+            "job_id": None,
+            "status": "failed",
+            "loaded_row_count": 0,
+            "error_message": upload.get("error_message") or "GCS landing upload failed",
+        }
+        for upload in landing_uploads
+        if upload.get("status") == "failed"
+    ]
 
 
 def _manifest_rows(
@@ -249,6 +407,29 @@ def _trocco_should_run(execution_result: dict[str, Any]) -> bool:
 def _folder_id_for_provider(provider: str) -> str:
     folder_url = PROVIDER_CONFIG[provider]["folder_url"]
     return folder_url.rstrip("/").split("/")[-1]
+
+
+def _staging_table_for_provider(provider: str) -> str:
+    config = PROVIDER_CONFIG[provider]
+    return f"{config['staging_dataset']}.{config['staging_table']}"
+
+
+def _manifest_month_for_file(file_id: str, manifest_rows: list[dict[str, Any]]) -> str | None:
+    for row in manifest_rows:
+        if str(row.get("file_id")) == file_id:
+            return row.get("sales_yyyymm")
+    return None
+
+
+def _safe_object_name(file_name: str) -> str:
+    return file_name.replace("/", "_").replace("\\", "_")
+
+
+def _file_value(source: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in source:
+            return source[key]
+    return None
 
 
 def _bool_value(source: dict[str, Any], key: str, default: bool) -> bool:
