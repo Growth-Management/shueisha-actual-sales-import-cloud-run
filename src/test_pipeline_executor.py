@@ -30,7 +30,7 @@ class FakeDriveClient:
 
     def download_file(self, *, file_id):
         self.downloaded_file_ids.append(file_id)
-        return b"file-bytes"
+        return _workbook_bytes()
 
 
 class FakeStorageClient:
@@ -267,9 +267,13 @@ def test_execute_pipeline_builds_manifest_and_validation_results():
     assert bigquery_client.written_manifest_rows[0]["detected_action"] == "new"
     assert drive_client.downloaded_file_ids == ["apple_file_001"]
     assert storage_client.uploads[0]["bucket_name"] == "sales-landing"
+    assert storage_client.uploads[0]["content_type"] == "text/csv; charset=utf-8"
+    assert storage_client.uploads[0]["data"] == b"store,sales\napple,1200\n"
     assert bigquery_client.load_jobs[0]["source_uris"] == [
-        "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.xlsx"
+        "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.csv"
     ]
+    assert payload["staging"]["landing_uploads"][0]["normalized_file_name"] == "202606_ICE納品.csv"
+    assert payload["staging"]["landing_uploads"][0]["was_converted"] is True
     assert payload["manifest_diff"]["records"][0]["detected_action"] == "new"
     assert payload["manifest_diff"]["write_result"]["status"] == "success"
     assert payload["validation"]["status"] == "success"
@@ -313,7 +317,7 @@ def test_execute_pipeline_generates_bigquery_plan_from_provider_defaults():
             "file_id": "apple_file_001",
             "sales_yyyymm": "202606",
             "source_uris": [
-                "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.xlsx"
+                "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.csv"
             ],
         }
     ]
@@ -458,3 +462,18 @@ def test_execute_pipeline_maps_landing_upload_failure_to_staging_failed():
     assert payload["staging"]["status"] == "failed"
     assert payload["staging"]["landing_uploads"][0]["status"] == "failed"
     assert payload["trocco"]["status"] == "not_triggered"
+
+
+def _workbook_bytes():
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.append(["store", "sales"])
+    worksheet.append(["apple", 1200])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    return buffer.getvalue()
