@@ -116,8 +116,14 @@ BigQuery load / promotion / verification is skipped when validation fails or whe
 
 When `manifest.existing_rows` is omitted, Cloud Run fetches active rows from `ice-sh.ice_sh_process.drive_sales_import_manifest`. Generated manifest rows are written back after execution unless `manifest.write_enabled` is `false`.
 
-When `landing.bucket` is provided, Cloud Run uploads `new` / `revised` Drive files to GCS and injects the generated `gs://...` URI into matching BigQuery load jobs.
+When `landing.bucket` is provided, Cloud Run normalizes `new` / `revised` Drive files to BigQuery-loadable CSV, uploads them to GCS, and injects the generated `gs://...` URI into matching BigQuery load jobs.
 If a GCS landing upload fails, staging is marked as failed and promotion / verification / TROCCO are skipped.
+
+Drive file normalization:
+
+- `.csv` files are uploaded as-is.
+- `.xlsx` and `.xlsm` files are converted from the first worksheet to UTF-8 CSV.
+- unsupported file formats fail the landing upload step and stop downstream BigQuery promotion.
 
 BigQuery settings can be provided explicitly, but Cloud Run also generates defaults from `provider` and `sales_yyyymm`:
 
