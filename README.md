@@ -121,9 +121,17 @@ If a GCS landing upload fails, staging is marked as failed and promotion / verif
 
 Drive file normalization:
 
-- `.csv` files are uploaded as-is.
-- `.xlsx` and `.xlsm` files are converted from the first worksheet to UTF-8 CSV.
+- `.csv` files and `.xlsx` / `.xlsm` first worksheets are parsed into rows.
+- leading note / title rows are skipped until the provider-specific header row is found.
+- source column aliases are normalized to provider-specific canonical column names.
+- dates are normalized to `YYYY-MM-DD`; amount fields are normalized as decimal strings.
+- normalized CSV files are written as UTF-8 CSV.
 - unsupported file formats fail the landing upload step and stop downstream BigQuery promotion.
+
+Provider output columns:
+
+- Apple: `sales_yyyymm`, `transaction_date`, `sku`, `proceeds_amount`
+- Google Play: `sales_yyyymm`, `transaction_date`, `package_name`, `sku`, `developer_proceeds`
 
 BigQuery settings can be provided explicitly, but Cloud Run also generates defaults from `provider` and `sales_yyyymm`:
 
