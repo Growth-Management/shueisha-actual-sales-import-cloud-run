@@ -34,6 +34,11 @@ from run_result_mapper import build_payload_from_run_result  # noqa: E402
 from validation import build_validation_results  # noqa: E402
 
 
+EXECUTION_MODE_FULL = "full"
+EXECUTION_MODE_STAGING_LOAD_ONLY = "staging_load_only"
+EXECUTION_MODES = {EXECUTION_MODE_FULL, EXECUTION_MODE_STAGING_LOAD_ONLY}
+
+
 def execute_pipeline_to_agent_request(
     request_body: dict[str, Any],
     *,
@@ -71,6 +76,7 @@ def execute_pipeline(
     provider = request_body.get("provider")
     sales_yyyymm = request_body.get("sales_yyyymm")
     run_context = _required_dict(request_body, "run_context")
+    execution_mode = _execution_mode(request_body)
 
     if provider not in PROVIDER_CONFIG:
         raise ValueError("provider must be apple or googleplay")
@@ -132,7 +138,7 @@ def execute_pipeline(
                 landing_uploads=landing_uploads,
             )
             load_results = bigquery_client.run_load_jobs(load_jobs)
-            if not load_jobs or _has_load_failure(load_results):
+            if not load_jobs or _has_load_failure(load_results) or execution_mode == EXECUTION_MODE_STAGING_LOAD_ONLY:
                 promotion_results = []
                 verification_results = []
             else:
@@ -177,7 +183,7 @@ def execute_pipeline(
         },
     }
 
-    if _trocco_should_run(execution_result):
+    if execution_mode == EXECUTION_MODE_FULL and _trocco_should_run(execution_result):
         try:
             trocco_response = trocco_client.trigger_workflow(
                 workflow_id=TROCCO_WORKFLOW_ID,
@@ -574,6 +580,13 @@ def _file_value(source: dict[str, Any], *keys: str) -> Any:
 
 def _is_sales_yyyymm(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 6 and value.isdigit()
+
+
+def _execution_mode(source: dict[str, Any]) -> str:
+    value = source.get("execution_mode", EXECUTION_MODE_FULL)
+    if value not in EXECUTION_MODES:
+        raise ValueError("execution_mode must be full or staging_load_only")
+    return value
 
 
 def _bool_value(source: dict[str, Any], key: str, default: bool) -> bool:
