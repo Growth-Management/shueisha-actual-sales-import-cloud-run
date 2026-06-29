@@ -62,6 +62,8 @@ class FakeBigQueryClient:
         self.fetch_manifest_called = False
         self.written_manifest_rows = []
         self.load_jobs = []
+        self.promotion_operations = []
+        self.verification_checks = []
 
     def fetch_manifest_existing_rows(self, *, provider, sales_yyyymm, table="ice-sh.ice_sh_process.drive_sales_import_manifest"):
         self.fetch_manifest_called = True
@@ -90,6 +92,7 @@ class FakeBigQueryClient:
 
     def run_promotion(self, operations):
         self.promotion_called = True
+        self.promotion_operations = operations
         return [
             {
                 "sales_yyyymm": "202606",
@@ -100,6 +103,7 @@ class FakeBigQueryClient:
 
     def run_verification(self, checks):
         self.verification_called = True
+        self.verification_checks = checks
         return [
             {
                 "name": "production_row_count_matches_staging",
@@ -270,6 +274,94 @@ def test_execute_pipeline_builds_manifest_and_validation_results():
     assert payload["manifest_diff"]["write_result"]["status"] == "success"
     assert payload["validation"]["status"] == "success"
     assert payload["drive_source"]["detected_files"][0]["detected_action"] == "new"
+
+
+def test_execute_pipeline_generates_bigquery_plan_from_provider_defaults():
+    drive_client = FakeDriveClient()
+    storage_client = FakeStorageClient()
+    bigquery_client = FakeBigQueryClient()
+    request = _request_without_manifest_or_validation()
+    request["landing"] = {"bucket": "sales-landing", "prefix": "drive-import"}
+    request["bigquery"] = {
+        "load_job_template": {
+            "job_config": {
+                "skip_leading_rows": 2,
+            }
+        }
+    }
+
+    execute_pipeline_to_agent_request(
+        request,
+        drive_client=drive_client,
+        storage_client=storage_client,
+        bigquery_client=bigquery_client,
+        trocco_client=FakeTroccoClient(),
+    )
+
+    assert bigquery_client.load_jobs == [
+        {
+            "destination_table": "ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg",
+            "job_config": {
+                "source_format": "CSV",
+                "autodetect": True,
+                "skip_leading_rows": 2,
+                "write_disposition": "WRITE_APPEND",
+                "field_delimiter": ",",
+                "allow_quoted_newlines": True,
+                "encoding": "UTF-8",
+            },
+            "file_id": "apple_file_001",
+            "sales_yyyymm": "202606",
+            "source_uris": [
+                "gs://sales-landing/drive-import/apple/202606/apple_file_001/202606_ICE納品.xlsx"
+            ],
+        }
+    ]
+    assert bigquery_client.promotion_operations == [
+        {
+            "sales_yyyymm": "202606",
+            "delete_sql": "DELETE FROM `ice-sh.ice_sh_source.sh_actual_apple_data` WHERE sales_yyyymm = '202606'",
+            "insert_sql": (
+                "INSERT INTO `ice-sh.ice_sh_source.sh_actual_apple_data` "
+                "SELECT * FROM `ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg` WHERE sales_yyyymm = '202606'"
+            ),
+        }
+    ]
+    assert bigquery_client.verification_checks == [
+        {
+            "name": "production_row_count_matches_staging_202606",
+            "sales_yyyymm": "202606",
+            "sql": (
+                "SELECT "
+                "(SELECT COUNT(*) FROM `ice-sh.ice_sh_source.sh_actual_apple_data` WHERE sales_yyyymm = '202606') "
+                "= "
+                "(SELECT COUNT(*) FROM `ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg` WHERE sales_yyyymm = '202606')"
+            ),
+            "expected": True,
+        }
+    ]
+
+
+def test_execute_pipeline_skips_promotion_when_no_load_job_exists():
+    bigquery_client = FakeBigQueryClient()
+    request = _request_without_manifest_or_validation()
+    request["bigquery"] = {}
+
+    request_body = execute_pipeline_to_agent_request(
+        request,
+        drive_client=FakeDriveClient(),
+        storage_client=FakeStorageClient(),
+        bigquery_client=bigquery_client,
+        trocco_client=FakeTroccoClient(),
+    )
+    payload = request_body["input"]["payload"]
+
+    assert bigquery_client.load_called is True
+    assert bigquery_client.load_jobs == []
+    assert bigquery_client.promotion_called is False
+    assert bigquery_client.verification_called is False
+    assert payload["promotion"]["status"] == "not_started"
+    assert payload["verification"]["status"] == "not_started"
 
 
 def test_execute_pipeline_skips_bigquery_when_generated_validation_fails():
