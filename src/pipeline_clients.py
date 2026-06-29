@@ -7,6 +7,12 @@ from typing import Any, Protocol
 
 
 MANIFEST_TABLE = "ice-sh.ice_sh_process.drive_sales_import_manifest"
+PROJECT_ID = os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCLOUD_PROJECT")
+
+SECRET_CLIENT_ID = os.environ.get("DRIVE_OAUTH_CLIENT_ID_SECRET", "drive-oauth-client-id")
+SECRET_CLIENT_SECRET = os.environ.get("DRIVE_OAUTH_CLIENT_SECRET_SECRET", "drive-oauth-client-secret")
+SECRET_REFRESH_TOKEN = os.environ.get("DRIVE_OAUTH_REFRESH_TOKEN_SECRET", "drive-oauth-refresh-token")
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
 class DriveClient(Protocol):
@@ -72,7 +78,12 @@ class GoogleDriveClient:
         if self._service is None:
             from googleapiclient.discovery import build
 
-            self._service = build("drive", "v3", cache_discovery=False)
+            self._service = build(
+                "drive",
+                "v3",
+                credentials=_drive_credentials_from_secret_manager(),
+                cache_discovery=False,
+            )
         return self._service
 
     def list_files(self, *, folder_id: str) -> list[dict[str, Any]]:
@@ -343,6 +354,34 @@ class TroccoApiClient:
             },
             timeout=60,
         )
+
+
+def _drive_credentials_from_secret_manager() -> Any:
+    from google.oauth2.credentials import Credentials
+
+    return Credentials(
+        token=None,
+        refresh_token=_get_secret(SECRET_REFRESH_TOKEN),
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=_get_secret(SECRET_CLIENT_ID),
+        client_secret=_get_secret(SECRET_CLIENT_SECRET),
+        scopes=DRIVE_SCOPES,
+    )
+
+
+def _get_secret(secret_id: str) -> str:
+    from google.cloud import secretmanager
+
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{_project_id()}/secrets/{secret_id}/versions/latest"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("utf-8").strip()
+
+
+def _project_id() -> str:
+    if PROJECT_ID:
+        return PROJECT_ID
+    raise ValueError("PROJECT_ID, GOOGLE_CLOUD_PROJECT, or GCLOUD_PROJECT is required for Drive OAuth secrets")
 
 
 def _first_row_value(rows: list[Any]) -> Any:
