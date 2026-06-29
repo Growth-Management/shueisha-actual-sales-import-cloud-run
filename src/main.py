@@ -8,9 +8,11 @@ from flask import Flask, jsonify, request
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
 PAYLOAD_V1_DIR = REPO_ROOT / "integration" / "payload_v1"
-if str(PAYLOAD_V1_DIR) not in sys.path:
-    sys.path.insert(0, str(PAYLOAD_V1_DIR))
+for import_dir in (SRC_DIR, PAYLOAD_V1_DIR):
+    if str(import_dir) not in sys.path:
+        sys.path.insert(0, str(import_dir))
 
 from payload_builder import (  # noqa: E402
     build_agent_request,
@@ -35,6 +37,18 @@ def _bool_from_body(body: dict[str, Any], key: str, default: bool = False) -> bo
     if isinstance(value, bool):
         return value
     return default
+
+
+@app.get("/")
+def index():
+    return jsonify(
+        {
+            "status": "ok",
+            "service": "shueisha-actual-sales-import",
+            "readiness": "/readiness",
+            "execute_agent_request": "/execute/agent-request",
+        }
+    )
 
 
 @app.get("/readiness")
