@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import os
 from typing import Any, Protocol
+
+
+MANIFEST_TABLE = "ice-sh.ice_sh_process.drive_sales_import_manifest"
 
 
 class DriveClient(Protocol):
@@ -10,6 +14,24 @@ class DriveClient(Protocol):
 
 
 class BigQueryClient(Protocol):
+    def fetch_manifest_existing_rows(
+        self,
+        *,
+        provider: str,
+        sales_yyyymm: list[str],
+        table: str = MANIFEST_TABLE,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def write_manifest_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        table: str = MANIFEST_TABLE,
+        run_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        ...
+
     def run_load_jobs(self, load_jobs: list[dict[str, Any]]) -> list[Any]:
         ...
 
@@ -66,6 +88,73 @@ class GoogleBigQueryClient:
 
             self._client = bigquery.Client()
         return self._client
+
+    def fetch_manifest_existing_rows(
+        self,
+        *,
+        provider: str,
+        sales_yyyymm: list[str],
+        table: str = MANIFEST_TABLE,
+    ) -> list[dict[str, Any]]:
+        from google.cloud import bigquery
+
+        sql = f"""
+            SELECT *
+            FROM `{table}`
+            WHERE provider = @provider
+              AND sales_yyyymm IN UNNEST(@sales_yyyymm)
+              AND COALESCE(is_active_after, is_active, FALSE) = TRUE
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("provider", "STRING", provider),
+                bigquery.ArrayQueryParameter("sales_yyyymm", "STRING", sales_yyyymm),
+            ]
+        )
+        rows = self.client.query(sql, job_config=job_config).result()
+        return [_row_to_dict(row) for row in rows]
+
+    def write_manifest_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        table: str = MANIFEST_TABLE,
+        run_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not rows:
+            return {"status": "skipped", "inserted_count": 0, "table": table, "error_message": None}
+
+        try:
+            inserted_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            rows_to_insert = [
+                {
+                    **row,
+                    "run_id": (run_context or {}).get("run_id"),
+                    "manifest_written_at": inserted_at,
+                }
+                for row in rows
+            ]
+            errors = self.client.insert_rows_json(table, rows_to_insert, ignore_unknown_values=True)
+            if errors:
+                return {
+                    "status": "failed",
+                    "inserted_count": 0,
+                    "table": table,
+                    "error_message": str(errors),
+                }
+            return {
+                "status": "success",
+                "inserted_count": len(rows_to_insert),
+                "table": table,
+                "error_message": None,
+            }
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "inserted_count": 0,
+                "table": table,
+                "error_message": str(exc),
+            }
 
     def run_load_jobs(self, load_jobs: list[dict[str, Any]]) -> list[Any]:
         results: list[Any] = []
@@ -201,6 +290,14 @@ def _first_row_value(rows: list[Any]) -> Any:
         return row[0]
     except Exception:
         return getattr(row, "value", None)
+
+
+def _row_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return dict(row)
+    if hasattr(row, "items"):
+        return dict(row.items())
+    return dict(row)
 
 
 def _failed_load_job(config: dict[str, Any], exc: Exception) -> dict[str, Any]:
