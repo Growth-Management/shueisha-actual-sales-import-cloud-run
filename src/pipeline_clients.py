@@ -297,10 +297,22 @@ class GoogleBigQueryClient:
         source_format = options.pop("source_format", None)
         if isinstance(source_format, str):
             source_format = getattr(bigquery.SourceFormat, source_format)
+        schema = options.pop("schema", None)
+        if schema is not None:
+            schema = [
+                bigquery.SchemaField(
+                    field["name"],
+                    field["type"],
+                    mode=field.get("mode", "NULLABLE"),
+                    description=field.get("description"),
+                )
+                for field in schema
+            ]
 
         return bigquery.LoadJobConfig(
             source_format=source_format,
             autodetect=options.pop("autodetect", None),
+            schema=schema,
             skip_leading_rows=options.pop("skip_leading_rows", None),
             write_disposition=options.pop("write_disposition", None),
             **options,
