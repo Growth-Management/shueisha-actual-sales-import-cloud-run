@@ -12,6 +12,7 @@ if str(PAYLOAD_V1_DIR) not in sys.path:
     sys.path.insert(0, str(PAYLOAD_V1_DIR))
 
 from payload_builder import PROVIDER_CONFIG, TROCCO_WORKFLOW_ID  # noqa: E402
+from bigquery_schema import schema_for_provider  # noqa: E402
 from execution_result_connector import (  # noqa: E402
     build_agent_request_from_execution_results,
     build_run_result_from_execution_results,
@@ -339,7 +340,8 @@ def _load_job_template(*, provider: str, bigquery_request: dict[str, Any]) -> di
     override = dict(bigquery_request.get("load_job_template") or {})
     default_job_config = {
         "source_format": "CSV",
-        "autodetect": True,
+        "autodetect": False,
+        "schema": schema_for_provider(provider),
         "skip_leading_rows": 1,
         "write_disposition": "WRITE_APPEND",
         "field_delimiter": ",",
