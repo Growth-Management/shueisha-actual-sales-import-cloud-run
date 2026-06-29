@@ -136,7 +136,8 @@ Provider output columns:
 
 BigQuery settings can be provided explicitly, but Cloud Run also generates defaults from `provider` and `sales_yyyymm`:
 
-- `load_job_template` defaults to CSV load settings and the provider staging table.
+- `load_job_template` defaults to CSV load settings, the provider staging table, and an explicit BigQuery schema generated from the provider canonical column order.
+- generated load jobs set `autodetect` to `false`.
 - `load_jobs` are generated from successful GCS landing uploads and merged with `load_job_template`.
 - `promotion_operations` default to month-level `DELETE` from production followed by `INSERT ... SELECT` from staging.
 - `verification_checks` default to month-level production/staging row-count equality checks.
@@ -167,7 +168,7 @@ BigQuery settings can be provided explicitly, but Cloud Run also generates defau
     "load_job_template": {
       "job_config": {
         "source_format": "CSV",
-        "autodetect": true,
+        "autodetect": false,
         "skip_leading_rows": 1,
         "write_disposition": "WRITE_APPEND",
         "field_delimiter": ",",
