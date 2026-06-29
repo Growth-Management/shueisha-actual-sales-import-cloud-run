@@ -16,6 +16,7 @@ from execution_result_connector import (  # noqa: E402
     build_agent_request_from_execution_results,
     build_run_result_from_execution_results,
 )
+from file_normalization import normalize_drive_file  # noqa: E402
 from manifest_diff import build_manifest_rows, detected_actions_by_file_id  # noqa: E402
 from pipeline_clients import (  # noqa: E402
     BigQueryClient,
@@ -242,21 +243,29 @@ def _landing_uploads(
                 provider,
                 str(month or "unknown"),
                 file_id,
-                _safe_object_name(str(file_name)),
+                _safe_object_name(_normalized_object_file_name(str(file_name))),
             ]
         )
         try:
             data = drive_client.download_file(file_id=file_id)
+            normalized = normalize_drive_file(
+                file_name=str(file_name),
+                mime_type=mime_type,
+                data=data,
+            )
             gcs_uri = storage_client.upload_bytes(
                 bucket_name=str(bucket),
                 object_name=object_name,
-                data=data,
-                content_type=mime_type,
+                data=normalized["data"],
+                content_type=normalized["content_type"],
             )
             uploads.append(
                 {
                     "file_id": file_id,
                     "file_name": file_name,
+                    "normalized_file_name": normalized["file_name"],
+                    "normalized_format": normalized["format"],
+                    "was_converted": normalized["was_converted"],
                     "sales_yyyymm": month,
                     "gcs_uri": gcs_uri,
                     "bucket": bucket,
@@ -270,6 +279,9 @@ def _landing_uploads(
                 {
                     "file_id": file_id,
                     "file_name": file_name,
+                    "normalized_file_name": None,
+                    "normalized_format": None,
+                    "was_converted": False,
                     "sales_yyyymm": month,
                     "gcs_uri": None,
                     "bucket": bucket,
@@ -534,6 +546,13 @@ def _manifest_month_for_file(file_id: str, manifest_rows: list[dict[str, Any]]) 
 
 def _safe_object_name(file_name: str) -> str:
     return file_name.replace("/", "_").replace("\\", "_")
+
+
+def _normalized_object_file_name(file_name: str) -> str:
+    suffix = Path(file_name).suffix.lower()
+    if suffix in {".xlsx", ".xlsm"}:
+        return f"{Path(file_name).stem}.csv"
+    return file_name
 
 
 def _file_value(source: dict[str, Any], *keys: str) -> Any:
