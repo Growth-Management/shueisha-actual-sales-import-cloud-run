@@ -119,6 +119,14 @@ When `manifest.existing_rows` is omitted, Cloud Run fetches active rows from `ic
 When `landing.bucket` is provided, Cloud Run uploads `new` / `revised` Drive files to GCS and injects the generated `gs://...` URI into matching BigQuery load jobs.
 If a GCS landing upload fails, staging is marked as failed and promotion / verification / TROCCO are skipped.
 
+BigQuery settings can be provided explicitly, but Cloud Run also generates defaults from `provider` and `sales_yyyymm`:
+
+- `load_job_template` defaults to CSV load settings and the provider staging table.
+- `load_jobs` are generated from successful GCS landing uploads and merged with `load_job_template`.
+- `promotion_operations` default to month-level `DELETE` from production followed by `INSERT ... SELECT` from staging.
+- `verification_checks` default to month-level production/staging row-count equality checks.
+- promotion and verification run only after at least one load job exists and all load jobs succeed.
+
 ```json
 {
   "provider": "apple",
@@ -141,12 +149,18 @@ If a GCS landing upload fails, staging is marked as failed and promotion / verif
     "prefix": "drive-sales-import"
   },
   "bigquery": {
-    "load_jobs": [
-      {
-        "file_id": "drive_file_id",
-        "destination_table": "ice-sh.ice_sh_source_staging.sh_actual_apple_data_stg"
+    "load_job_template": {
+      "job_config": {
+        "source_format": "CSV",
+        "autodetect": true,
+        "skip_leading_rows": 1,
+        "write_disposition": "WRITE_APPEND",
+        "field_delimiter": ",",
+        "allow_quoted_newlines": true,
+        "encoding": "UTF-8"
       }
-    ],
+    },
+    "load_jobs": [],
     "promotion_operations": [],
     "verification_checks": []
   },
