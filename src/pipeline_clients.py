@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from io import BytesIO
 import os
 from typing import Any, Protocol
 
@@ -10,6 +11,21 @@ MANIFEST_TABLE = "ice-sh.ice_sh_process.drive_sales_import_manifest"
 
 class DriveClient(Protocol):
     def list_files(self, *, folder_id: str) -> list[dict[str, Any]]:
+        ...
+
+    def download_file(self, *, file_id: str) -> bytes:
+        ...
+
+
+class StorageClient(Protocol):
+    def upload_bytes(
+        self,
+        *,
+        bucket_name: str,
+        object_name: str,
+        data: bytes,
+        content_type: str | None = None,
+    ) -> str:
         ...
 
 
@@ -75,6 +91,43 @@ class GoogleDriveClient:
             page_token = response.get("nextPageToken")
             if not page_token:
                 return files
+
+    def download_file(self, *, file_id: str) -> bytes:
+        from googleapiclient.http import MediaIoBaseDownload
+
+        request = self.service.files().get_media(fileId=file_id)
+        buffer = BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buffer.getvalue()
+
+
+class GoogleCloudStorageClient:
+    def __init__(self, client: Any | None = None):
+        self._client = client
+
+    @property
+    def client(self) -> Any:
+        if self._client is None:
+            from google.cloud import storage
+
+            self._client = storage.Client()
+        return self._client
+
+    def upload_bytes(
+        self,
+        *,
+        bucket_name: str,
+        object_name: str,
+        data: bytes,
+        content_type: str | None = None,
+    ) -> str:
+        bucket = self.client.bucket(bucket_name)
+        blob = bucket.blob(object_name)
+        blob.upload_from_string(data, content_type=content_type)
+        return f"gs://{bucket_name}/{object_name}"
 
 
 class GoogleBigQueryClient:
