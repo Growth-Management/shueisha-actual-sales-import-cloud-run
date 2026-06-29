@@ -113,6 +113,8 @@ The request can include prebuilt `manifest.rows` and `validation.results`. If om
 
 BigQuery load / promotion / verification is skipped when validation fails or when the manifest diff has no `new` or `revised` files.
 
+When `manifest.existing_rows` is omitted, Cloud Run fetches active rows from `ice-sh.ice_sh_process.drive_sales_import_manifest`. Generated manifest rows are written back after execution unless `manifest.write_enabled` is `false`.
+
 ```json
 {
   "provider": "apple",
@@ -126,7 +128,9 @@ BigQuery load / promotion / verification is skipped when validation fails or whe
     "is_test": false
   },
   "manifest": {
-    "existing_rows": []
+    "table": "ice-sh.ice_sh_process.drive_sales_import_manifest",
+    "fetch_existing_rows": true,
+    "write_enabled": true
   },
   "bigquery": {
     "load_jobs": [],
