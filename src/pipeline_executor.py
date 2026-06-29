@@ -74,6 +74,8 @@ def execute_pipeline(
         raise ValueError("provider must be apple or googleplay")
     if not isinstance(sales_yyyymm, list):
         raise ValueError("sales_yyyymm must be a list")
+    if any(not _is_sales_yyyymm(month) for month in sales_yyyymm):
+        raise ValueError("sales_yyyymm values must be YYYYMM strings")
 
     drive_client = drive_client or GoogleDriveClient()
     storage_client = storage_client or GoogleCloudStorageClient()
@@ -128,8 +130,22 @@ def execute_pipeline(
                 landing_uploads=landing_uploads,
             )
             load_results = bigquery_client.run_load_jobs(load_jobs)
-            promotion_results = bigquery_client.run_promotion(_list_from(bigquery_request, "promotion_operations", "operations"))
-            verification_results = bigquery_client.run_verification(_list_from(bigquery_request, "verification_checks"))
+            if not load_jobs or _has_load_failure(load_results):
+                promotion_results = []
+                verification_results = []
+            else:
+                promotion_operations = _promotion_operations(
+                    provider=provider,
+                    sales_yyyymm=sales_yyyymm,
+                    bigquery_request=bigquery_request,
+                )
+                verification_checks = _verification_checks(
+                    provider=provider,
+                    sales_yyyymm=sales_yyyymm,
+                    bigquery_request=bigquery_request,
+                )
+                promotion_results = bigquery_client.run_promotion(promotion_operations)
+                verification_results = bigquery_client.run_verification(verification_checks)
 
     execution_result = {
         "provider": provider,
@@ -276,13 +292,12 @@ def _load_jobs(
     if not landing_uploads:
         return provided_jobs
 
+    default_template = _load_job_template(provider=provider, bigquery_request=bigquery_request)
     jobs_by_file_id = {
-        str(job.get("file_id")): deepcopy(job)
+        str(job.get("file_id")): _merge_load_job(default_template, job)
         for job in provided_jobs
         if job.get("file_id") is not None
     }
-    default_template = dict(bigquery_request.get("load_job_template") or {})
-    destination_table = default_template.get("destination_table") or _staging_table_for_provider(provider)
     generated_jobs: list[dict[str, Any]] = []
 
     for upload in landing_uploads:
@@ -293,16 +308,107 @@ def _load_jobs(
         job["file_id"] = file_id
         job["sales_yyyymm"] = upload.get("sales_yyyymm")
         job["source_uris"] = [upload["gcs_uri"]]
-        job.setdefault("destination_table", destination_table)
         generated_jobs.append(job)
 
     generated_jobs.extend(jobs_by_file_id.values())
-    generated_jobs.extend(job for job in provided_jobs if job.get("file_id") is None)
+    generated_jobs.extend(_merge_load_job(default_template, job) for job in provided_jobs if job.get("file_id") is None)
     return generated_jobs
+
+
+def _load_job_template(*, provider: str, bigquery_request: dict[str, Any]) -> dict[str, Any]:
+    override = dict(bigquery_request.get("load_job_template") or {})
+    default_job_config = {
+        "source_format": "CSV",
+        "autodetect": True,
+        "skip_leading_rows": 1,
+        "write_disposition": "WRITE_APPEND",
+        "field_delimiter": ",",
+        "allow_quoted_newlines": True,
+        "encoding": "UTF-8",
+    }
+    override_job_config = dict(override.pop("job_config", {}) or {})
+    return {
+        "destination_table": override.pop("destination_table", _staging_table_for_provider(provider)),
+        "job_config": {
+            **default_job_config,
+            **override_job_config,
+        },
+        **override,
+    }
+
+
+def _merge_load_job(template: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(template)
+    job_copy = deepcopy(job)
+    template_job_config = dict(merged.get("job_config") or {})
+    job_config = dict(job_copy.pop("job_config", {}) or {})
+    merged.update(job_copy)
+    merged["job_config"] = {
+        **template_job_config,
+        **job_config,
+    }
+    return merged
+
+
+def _promotion_operations(
+    *,
+    provider: str,
+    sales_yyyymm: list[str],
+    bigquery_request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    provided_operations = _list_from(bigquery_request, "promotion_operations", "operations")
+    if provided_operations:
+        return provided_operations
+
+    staging_table = bigquery_request.get("staging_table") or _staging_table_for_provider(provider)
+    production_table = bigquery_request.get("production_table") or _production_table_for_provider(provider)
+    return [
+        {
+            "sales_yyyymm": month,
+            "delete_sql": f"DELETE FROM `{production_table}` WHERE sales_yyyymm = '{month}'",
+            "insert_sql": (
+                f"INSERT INTO `{production_table}` "
+                f"SELECT * FROM `{staging_table}` WHERE sales_yyyymm = '{month}'"
+            ),
+        }
+        for month in sales_yyyymm
+    ]
+
+
+def _verification_checks(
+    *,
+    provider: str,
+    sales_yyyymm: list[str],
+    bigquery_request: dict[str, Any],
+) -> list[dict[str, Any]]:
+    provided_checks = _list_from(bigquery_request, "verification_checks")
+    if provided_checks:
+        return provided_checks
+
+    staging_table = bigquery_request.get("staging_table") or _staging_table_for_provider(provider)
+    production_table = bigquery_request.get("production_table") or _production_table_for_provider(provider)
+    return [
+        {
+            "name": f"production_row_count_matches_staging_{month}",
+            "sales_yyyymm": month,
+            "sql": (
+                "SELECT "
+                f"(SELECT COUNT(*) FROM `{production_table}` WHERE sales_yyyymm = '{month}') "
+                "= "
+                f"(SELECT COUNT(*) FROM `{staging_table}` WHERE sales_yyyymm = '{month}')"
+            ),
+            "expected": True,
+        }
+        for month in sales_yyyymm
+    ]
 
 
 def _has_landing_upload_failure(landing_uploads: list[dict[str, Any]]) -> bool:
     return any(upload.get("status") == "failed" for upload in landing_uploads)
+
+
+def _has_load_failure(load_results: list[Any]) -> bool:
+    return any(isinstance(result, dict) and result.get("status") == "failed" for result in load_results)
 
 
 def _failed_landing_load_results(landing_uploads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -414,6 +520,11 @@ def _staging_table_for_provider(provider: str) -> str:
     return f"{config['staging_dataset']}.{config['staging_table']}"
 
 
+def _production_table_for_provider(provider: str) -> str:
+    config = PROVIDER_CONFIG[provider]
+    return f"{config['production_dataset']}.{config['production_table']}"
+
+
 def _manifest_month_for_file(file_id: str, manifest_rows: list[dict[str, Any]]) -> str | None:
     for row in manifest_rows:
         if str(row.get("file_id")) == file_id:
@@ -430,6 +541,10 @@ def _file_value(source: dict[str, Any], *keys: str) -> Any:
         if key in source:
             return source[key]
     return None
+
+
+def _is_sales_yyyymm(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 6 and value.isdigit()
 
 
 def _bool_value(source: dict[str, Any], key: str, default: bool) -> bool:
