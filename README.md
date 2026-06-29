@@ -147,8 +147,11 @@ BigQuery schema reconciliation helpers are in `src/bigquery_schema.py`:
 
 - `schema_diff_for_provider` compares actual BigQuery table schema with the provider canonical schema.
 - `create_table_ddl_for_provider` generates `CREATE TABLE IF NOT EXISTS` DDL for staging / production tables.
+- `create_staging_dataset_ddl` generates the staging dataset DDL in the same `US` location as existing `ice-sh` datasets.
+- `schema_ddl_plan_for_provider` combines staging dataset/table creation DDL with production direct ALTER actions.
 - As of the latest checked BigQuery metadata, `ice-sh.ice_sh_source_staging` was not found in the `ice-sh` project.
 - Existing production tables were found under `ice-sh.ice_sh_source`, but they still use legacy all-STRING / legacy-name layouts and do not yet match the canonical schema.
+- Production direct ALTER is limited to supported metadata changes such as legacy column renames and missing column additions. Existing `STRING` to `DATE` / `NUMERIC` / `INT64` conversion and canonical column ordering require table recreation or CTAS overwrite.
 
 ```json
 {
