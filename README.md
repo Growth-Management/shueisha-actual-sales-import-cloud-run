@@ -143,6 +143,13 @@ BigQuery settings can be provided explicitly, but Cloud Run also generates defau
 - `verification_checks` default to month-level production/staging row-count equality checks.
 - promotion and verification run only after at least one load job exists and all load jobs succeed.
 
+BigQuery schema reconciliation helpers are in `src/bigquery_schema.py`:
+
+- `schema_diff_for_provider` compares actual BigQuery table schema with the provider canonical schema.
+- `create_table_ddl_for_provider` generates `CREATE TABLE IF NOT EXISTS` DDL for staging / production tables.
+- As of the latest checked BigQuery metadata, `ice-sh.ice_sh_source_staging` was not found in the `ice-sh` project.
+- Existing production tables were found under `ice-sh.ice_sh_source`, but they still use legacy all-STRING / legacy-name layouts and do not yet match the canonical schema.
+
 ```json
 {
   "provider": "apple",
