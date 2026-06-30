@@ -21,6 +21,7 @@ env:
   PROJECT_ID: ice-sh
   REGION: asia-northeast1
   SERVICE_NAME: shueisha-actual-sales-import
+  SERVICE_URL: https://shueisha-actual-sales-import-635067190197.asia-northeast1.run.app
   RUNTIME_SERVICE_ACCOUNT: drive-sales-import-runner@ice-sh.iam.gserviceaccount.com
 
 jobs:
@@ -52,13 +53,17 @@ jobs:
             --set-env-vars="PROJECT_ID=${PROJECT_ID}" \
             --no-allow-unauthenticated
 
+      - name: Authenticate for readiness ID token
+        id: auth-readiness
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+
       - name: Verify authenticated readiness endpoint
         run: |
-          SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" \
-            --project="${PROJECT_ID}" \
-            --region="${REGION}" \
-            --format='value(status.url)')"
-          ID_TOKEN="$(gcloud auth print-identity-token)"
           curl --fail --show-error --silent \
-            -H "Authorization: Bearer ${ID_TOKEN}" \
+            -H "Authorization: Bearer ${{ steps.auth-readiness.outputs.id_token }}" \
             "${SERVICE_URL}/readiness"
