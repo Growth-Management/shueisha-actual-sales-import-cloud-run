@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -37,6 +38,7 @@ from validation import build_validation_results  # noqa: E402
 EXECUTION_MODE_FULL = "full"
 EXECUTION_MODE_STAGING_LOAD_ONLY = "staging_load_only"
 EXECUTION_MODES = {EXECUTION_MODE_FULL, EXECUTION_MODE_STAGING_LOAD_ONLY}
+TARGET_MONTH_RE = re.compile(r"(?<!\d)(20\d{4})(?!\d)")
 
 
 def execute_pipeline_to_agent_request(
@@ -97,7 +99,12 @@ def execute_pipeline(
     bigquery_request = _optional_dict(request_body, "bigquery") or {}
     webhook_request = _optional_dict(request_body, "webhook") or {}
 
-    drive_files = _drive_files(provider=provider, drive_request=drive_request, drive_client=drive_client)
+    drive_files = _drive_files(
+        provider=provider,
+        sales_yyyymm=sales_yyyymm,
+        drive_request=drive_request,
+        drive_client=drive_client,
+    )
     manifest_rows = _manifest_rows(
         provider=provider,
         sales_yyyymm=sales_yyyymm,
@@ -203,15 +210,38 @@ def execute_pipeline(
     return execution_result
 
 
-def _drive_files(*, provider: str, drive_request: dict[str, Any], drive_client: DriveClient) -> list[dict[str, Any]]:
+def _drive_files(
+    *,
+    provider: str,
+    sales_yyyymm: list[str],
+    drive_request: dict[str, Any],
+    drive_client: DriveClient,
+) -> list[dict[str, Any]]:
     provided_files = drive_request.get("files")
     if provided_files is not None:
         if not isinstance(provided_files, list):
             raise ValueError("drive.files must be a list")
-        return provided_files
+        files = provided_files
+    else:
+        folder_id = drive_request.get("folder_id") or _folder_id_for_provider(provider)
+        files = drive_client.list_files(folder_id=folder_id)
 
-    folder_id = drive_request.get("folder_id") or _folder_id_for_provider(provider)
-    return drive_client.list_files(folder_id=folder_id)
+    if drive_request.get("include_outside_target_files") is True:
+        return files
+    return _filter_files_for_target_months(files, sales_yyyymm)
+
+
+def _filter_files_for_target_months(files: list[dict[str, Any]], sales_yyyymm: list[str]) -> list[dict[str, Any]]:
+    target_months = set(sales_yyyymm)
+    return [file_obj for file_obj in files if _sales_month_for_file(file_obj) in target_months]
+
+
+def _sales_month_for_file(file_obj: dict[str, Any]) -> str | None:
+    file_name = _file_value(file_obj, "name", "file_name")
+    if not file_name:
+        return None
+    match = TARGET_MONTH_RE.search(str(file_name))
+    return match.group(1) if match else None
 
 
 def _landing_uploads(
