@@ -58,7 +58,7 @@ jobs:
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --format='value(status.url)')"
-          ID_TOKEN="$(gcloud auth print-identity-token --audiences="${SERVICE_URL}")"
+          ID_TOKEN="$(gcloud auth print-identity-token)"
           curl --fail --show-error --silent \
             -H "Authorization: Bearer ${ID_TOKEN}" \
             "${SERVICE_URL}/readiness"
