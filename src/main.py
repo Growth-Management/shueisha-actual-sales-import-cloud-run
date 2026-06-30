@@ -39,6 +39,13 @@ def _bool_from_body(body: dict[str, Any], key: str, default: bool = False) -> bo
     return default
 
 
+def _with_execution_mode(request_body: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    payload = request_body.get("input", {}).get("payload")
+    if isinstance(payload, dict) and "execution_mode" not in payload:
+        payload["execution_mode"] = source.get("execution_mode", "full")
+    return request_body
+
+
 @app.get("/")
 def index():
     return jsonify(
@@ -92,6 +99,7 @@ def agent_request():
             include_notification_draft=_bool_from_body(body, "include_notification_draft", True),
             include_failure_analysis=_bool_from_body(body, "include_failure_analysis", False),
         )
+        request_body = _with_execution_mode(request_body, body)
     except ValueError as exc:
         return _error_response(str(exc))
 
@@ -116,6 +124,7 @@ def run_result_agent_request():
             include_notification_draft=_bool_from_body(body, "include_notification_draft", True),
             include_failure_analysis=_bool_from_body(body, "include_failure_analysis", False),
         )
+        request_body = _with_execution_mode(request_body, body)
     except ValueError as exc:
         return _error_response(str(exc))
 
@@ -139,6 +148,7 @@ def execution_results_agent_request():
             include_notification_draft=_bool_from_body(body, "include_notification_draft", True),
             include_failure_analysis=_bool_from_body(body, "include_failure_analysis", False),
         )
+        request_body = _with_execution_mode(request_body, body)
     except ValueError as exc:
         return _error_response(str(exc))
 
@@ -153,6 +163,7 @@ def execute_agent_request():
 
     try:
         request_body = execute_pipeline_to_agent_request(body)
+        request_body = _with_execution_mode(request_body, body)
     except ValueError as exc:
         return _error_response(str(exc))
 
