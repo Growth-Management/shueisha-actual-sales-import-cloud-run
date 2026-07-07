@@ -250,14 +250,18 @@ class GoogleBigQueryClient:
         for operation in operations:
             try:
                 delete_job = self.client.query(operation["delete_sql"])
-                delete_job.result()
+                completed_delete_job = delete_job.result()
                 insert_job = self.client.query(operation["insert_sql"])
-                insert_job.result()
+                completed_insert_job = insert_job.result()
                 results.append(
                     {
                         "sales_yyyymm": operation.get("sales_yyyymm"),
-                        "delete_job": delete_job,
-                        "insert_job": insert_job,
+                        "status": "success",
+                        "delete_job_id": _job_id(completed_delete_job, delete_job),
+                        "insert_job_id": _job_id(completed_insert_job, insert_job),
+                        "deleted_row_count": _affected_row_count(completed_delete_job, delete_job),
+                        "inserted_row_count": _affected_row_count(completed_insert_job, insert_job),
+                        "error_message": None,
                     }
                 )
             except Exception as exc:
@@ -336,7 +340,7 @@ class TroccoApiClient:
         self.api_key = api_key or os.environ.get("TROCCO_API_KEY")
         self.session = session
 
-    def trigger_workflow(self, *, workflow_id: int, payload: dict[str, Any]) -> Any:
+    def trigger_workflow(self, *, workflow_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
             raise ValueError("TROCCO_API_KEY is required")
         if self.session is None:
@@ -345,7 +349,7 @@ class TroccoApiClient:
             self.session = requests.Session()
 
         url = f"{self.base_url}/api/workflows/{workflow_id}/runs"
-        return self.session.post(
+        response = self.session.post(
             url,
             json=payload,
             headers={
@@ -354,6 +358,10 @@ class TroccoApiClient:
             },
             timeout=60,
         )
+        return {
+            "status_code": getattr(response, "status_code", None),
+            "body": _response_body(response),
+        }
 
 
 def _drive_credentials_from_secret_manager() -> Any:
@@ -413,3 +421,26 @@ def _failed_load_job(config: dict[str, Any], exc: Exception) -> dict[str, Any]:
         "loaded_row_count": 0,
         "error_message": str(exc),
     }
+
+
+def _job_id(*jobs: Any) -> str | None:
+    for job in jobs:
+        job_id = getattr(job, "job_id", None)
+        if job_id is not None:
+            return str(job_id)
+    return None
+
+
+def _affected_row_count(*jobs: Any) -> int:
+    for job in jobs:
+        row_count = getattr(job, "num_dml_affected_rows", None)
+        if row_count is not None:
+            return int(row_count)
+    return 0
+
+
+def _response_body(response: Any) -> Any:
+    try:
+        return response.json()
+    except Exception:
+        return getattr(response, "text", None)
