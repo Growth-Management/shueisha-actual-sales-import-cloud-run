@@ -4,6 +4,9 @@ from copy import deepcopy
 import os
 from typing import Any
 
+from payload_builder import PROVIDER_CONFIG
+from promotion_sql import build_schema_safe_promotion_operations
+
 
 LANDING_BUCKET_ENV = "LANDING_BUCKET"
 LANDING_PREFIX_ENV = "LANDING_PREFIX"
@@ -18,6 +21,7 @@ def apply_execution_defaults(request_body: dict[str, Any]) -> dict[str, Any]:
     body = deepcopy(request_body)
     _copy_execution_mode_from_run_context(body)
     _apply_landing_defaults(body)
+    _apply_schema_safe_promotion_defaults(body)
     return body
 
 
@@ -67,3 +71,29 @@ def _apply_landing_defaults(body: dict[str, Any]) -> None:
         landing["bucket"] = bucket
     if prefix and not landing.get("prefix"):
         landing["prefix"] = prefix
+
+
+def _apply_schema_safe_promotion_defaults(body: dict[str, Any]) -> None:
+    provider = body.get("provider")
+    sales_yyyymm = body.get("sales_yyyymm")
+    if provider not in PROVIDER_CONFIG or not isinstance(sales_yyyymm, list):
+        return
+
+    bigquery = body.get("bigquery")
+    if bigquery is None:
+        bigquery = {}
+        body["bigquery"] = bigquery
+    if not isinstance(bigquery, dict):
+        raise ValueError("bigquery must be a JSON object")
+    if bigquery.get("promotion_operations") or bigquery.get("operations"):
+        return
+
+    config = PROVIDER_CONFIG[provider]
+    staging_table = bigquery.get("staging_table") or f"{config['staging_dataset']}.{config['staging_table']}"
+    production_table = bigquery.get("production_table") or f"{config['production_dataset']}.{config['production_table']}"
+    bigquery["promotion_operations"] = build_schema_safe_promotion_operations(
+        provider=provider,
+        sales_yyyymm=sales_yyyymm,
+        staging_table=staging_table,
+        production_table=production_table,
+    )
