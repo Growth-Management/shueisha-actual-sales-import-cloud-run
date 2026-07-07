@@ -28,6 +28,11 @@ from pipeline_defaults import (  # noqa: E402
 )
 from pipeline_executor import execute_pipeline, execute_pipeline_to_agent_request  # noqa: E402
 from run_result_mapper import build_payload_from_run_result  # noqa: E402
+from safe_execute import (  # noqa: E402
+    execute_requires_landing_bucket,
+    execute_safe_mode,
+    is_safe_execution_mode,
+)
 
 
 app = Flask(__name__)
@@ -175,8 +180,14 @@ def execute():
         return _error_response("request body must be a JSON object")
 
     try:
-        execution_body = _prepare_execution_body(body, require_landing_bucket=True)
-        execution_result = execute_pipeline(execution_body)
+        execution_body = _prepare_execution_body(
+            body,
+            require_landing_bucket=execute_requires_landing_bucket(body),
+        )
+        if is_safe_execution_mode(execution_body):
+            execution_result = execute_safe_mode(execution_body)
+        else:
+            execution_result = execute_pipeline(execution_body)
     except ValueError as exc:
         return _error_response(str(exc))
 
