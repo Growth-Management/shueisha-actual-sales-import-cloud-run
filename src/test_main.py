@@ -100,3 +100,26 @@ def test_execute_applies_landing_bucket_env(monkeypatch):
 
     assert response.status_code == 200
     assert response.get_json()["provider"] == "googleplay"
+
+
+def test_execute_allows_trocco_only_without_landing_bucket(monkeypatch):
+    def fake_execute_safe_mode(body):
+        assert body["execution_mode"] == "trocco_only"
+        assert "landing" not in body or "bucket" not in body["landing"]
+        return {"provider": body["provider"], "execution_results": {"trocco": {}}}
+
+    monkeypatch.delenv("LANDING_BUCKET", raising=False)
+    monkeypatch.setattr(main, "execute_safe_mode", fake_execute_safe_mode)
+    client = app.test_client()
+
+    response = client.post(
+        "/execute",
+        json={
+            "run_context": {"execution_mode": "trocco_only"},
+            "provider": "googleplay",
+            "sales_yyyymm": ["202605"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["provider"] == "googleplay"
