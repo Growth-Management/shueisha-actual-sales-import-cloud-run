@@ -21,7 +21,12 @@ from payload_builder import (  # noqa: E402
     validate_payload,
 )
 from execution_result_connector import build_agent_request_from_execution_results  # noqa: E402
-from pipeline_executor import execute_pipeline_to_agent_request  # noqa: E402
+from pipeline_defaults import (  # noqa: E402
+    apply_execution_defaults,
+    execution_mode_from_request,
+    has_landing_bucket,
+)
+from pipeline_executor import execute_pipeline, execute_pipeline_to_agent_request  # noqa: E402
 from run_result_mapper import build_payload_from_run_result  # noqa: E402
 
 
@@ -42,8 +47,15 @@ def _bool_from_body(body: dict[str, Any], key: str, default: bool = False) -> bo
 def _with_execution_mode(request_body: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
     payload = request_body.get("input", {}).get("payload")
     if isinstance(payload, dict) and "execution_mode" not in payload:
-        payload["execution_mode"] = source.get("execution_mode", "full")
+        payload["execution_mode"] = execution_mode_from_request(source)
     return request_body
+
+
+def _prepare_execution_body(body: dict[str, Any], *, require_landing_bucket: bool = False) -> dict[str, Any]:
+    execution_body = apply_execution_defaults(body)
+    if require_landing_bucket and not has_landing_bucket(execution_body):
+        raise ValueError("landing.bucket or LANDING_BUCKET environment variable is required for /execute")
+    return execution_body
 
 
 @app.get("/")
@@ -53,6 +65,7 @@ def index():
             "status": "ok",
             "service": "shueisha-actual-sales-import",
             "readiness": "/readiness",
+            "execute": "/execute",
             "execute_agent_request": "/execute/agent-request",
         }
     )
@@ -155,6 +168,21 @@ def execution_results_agent_request():
     return jsonify(request_body)
 
 
+@app.post("/execute")
+def execute():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return _error_response("request body must be a JSON object")
+
+    try:
+        execution_body = _prepare_execution_body(body, require_landing_bucket=True)
+        execution_result = execute_pipeline(execution_body)
+    except ValueError as exc:
+        return _error_response(str(exc))
+
+    return jsonify(execution_result)
+
+
 @app.post("/execute/agent-request")
 def execute_agent_request():
     body = request.get_json(silent=True)
@@ -162,8 +190,9 @@ def execute_agent_request():
         return _error_response("request body must be a JSON object")
 
     try:
-        request_body = execute_pipeline_to_agent_request(body)
-        request_body = _with_execution_mode(request_body, body)
+        execution_body = _prepare_execution_body(body)
+        request_body = execute_pipeline_to_agent_request(execution_body)
+        request_body = _with_execution_mode(request_body, execution_body)
     except ValueError as exc:
         return _error_response(str(exc))
 

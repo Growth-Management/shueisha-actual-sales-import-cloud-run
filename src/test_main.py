@@ -9,8 +9,10 @@ def test_index_returns_service_status():
 
     response = client.get("/")
 
+    body = response.get_json()
     assert response.status_code == 200
-    assert response.get_json()["status"] == "ok"
+    assert body["status"] == "ok"
+    assert body["execute"] == "/execute"
 
 
 def test_readiness_returns_ok():
@@ -37,3 +39,64 @@ def test_execute_agent_request_includes_execution_mode(monkeypatch):
 
     assert response.status_code == 200
     assert response.get_json()["input"]["payload"]["execution_mode"] == "staging_load_only"
+
+
+def test_execute_agent_request_uses_run_context_execution_mode(monkeypatch):
+    def fake_execute_pipeline_to_agent_request(body):
+        assert body["execution_mode"] == "staging_load_only"
+        return {"input": {"payload": {"provider": "googleplay"}}}
+
+    monkeypatch.setattr(main, "execute_pipeline_to_agent_request", fake_execute_pipeline_to_agent_request)
+    client = app.test_client()
+
+    response = client.post(
+        "/execute/agent-request",
+        json={"run_context": {"execution_mode": "staging_load_only"}},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["input"]["payload"]["execution_mode"] == "staging_load_only"
+
+
+def test_execute_requires_landing_bucket(monkeypatch):
+    monkeypatch.delenv("LANDING_BUCKET", raising=False)
+    client = app.test_client()
+
+    response = client.post(
+        "/execute",
+        json={
+            "run_context": {"execution_mode": "staging_load_only"},
+            "provider": "googleplay",
+            "sales_yyyymm": ["202605"],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "landing.bucket" in response.get_json()["error"]
+
+
+def test_execute_applies_landing_bucket_env(monkeypatch):
+    def fake_execute_pipeline(body):
+        assert body["execution_mode"] == "staging_load_only"
+        assert body["landing"] == {
+            "bucket": "ice-sh-drive-sales-import-landing",
+            "prefix": "landing/drive-sales-import",
+        }
+        return {"provider": body["provider"], "execution_results": {}}
+
+    monkeypatch.setenv("LANDING_BUCKET", "ice-sh-drive-sales-import-landing")
+    monkeypatch.delenv("LANDING_PREFIX", raising=False)
+    monkeypatch.setattr(main, "execute_pipeline", fake_execute_pipeline)
+    client = app.test_client()
+
+    response = client.post(
+        "/execute",
+        json={
+            "run_context": {"execution_mode": "staging_load_only"},
+            "provider": "googleplay",
+            "sales_yyyymm": ["202605"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["provider"] == "googleplay"
