@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 MANIFEST_TABLE = "ice-sh.ice_sh_process.drive_sales_import_manifest"
 PROJECT_ID = os.environ.get("PROJECT_ID") or os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCLOUD_PROJECT")
+TROCCO_DATAMART_DEFINITION_IDS = os.environ.get("TROCCO_DATAMART_DEFINITION_IDS", "93283,93281,93284")
 
 SECRET_CLIENT_ID = os.environ.get("DRIVE_OAUTH_CLIENT_ID_SECRET", "drive-oauth-client-id")
 SECRET_CLIENT_SECRET = os.environ.get("DRIVE_OAUTH_CLIENT_SECRET_SECRET", "drive-oauth-client-secret")
@@ -348,20 +349,39 @@ class TroccoApiClient:
 
             self.session = requests.Session()
 
-        url = f"{self.base_url}/api/workflows/{workflow_id}/runs"
-        response = self.session.post(
-            url,
-            json=payload,
-            headers={
-                "Authorization": f"Token {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=60,
-        )
-        return {
-            "status_code": getattr(response, "status_code", None),
-            "body": _response_body(response),
-        }
+        datamart_definition_ids = _trocco_datamart_definition_ids(payload)
+        if not datamart_definition_ids:
+            raise ValueError("TROCCO datamart definition IDs are required")
+
+        responses: list[dict[str, Any]] = []
+        for datamart_definition_id in datamart_definition_ids:
+            response = self.session.post(
+                f"{self.base_url}/api/datamart_jobs",
+                json=_trocco_datamart_job_payload(
+                    datamart_definition_id=datamart_definition_id,
+                    workflow_id=workflow_id,
+                    payload=payload,
+                ),
+                headers={
+                    "Authorization": f"Token {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=60,
+            )
+            body = _response_body(response)
+            status_code = getattr(response, "status_code", None)
+            responses.append(
+                {
+                    "datamart_definition_id": datamart_definition_id,
+                    "status_code": status_code,
+                    "body": body,
+                    "job_id": _trocco_job_id(body),
+                }
+            )
+            if status_code is None or not 200 <= int(status_code) < 300:
+                break
+
+        return _trocco_workflow_response(workflow_id=workflow_id, datamart_jobs=responses)
 
 
 def _drive_credentials_from_secret_manager() -> Any:
@@ -444,3 +464,71 @@ def _response_body(response: Any) -> Any:
         return response.json()
     except Exception:
         return getattr(response, "text", None)
+
+
+def _trocco_datamart_definition_ids(payload: dict[str, Any]) -> list[int]:
+    configured = payload.get("datamart_definition_ids") or payload.get("datamart_ids") or TROCCO_DATAMART_DEFINITION_IDS
+    if isinstance(configured, str):
+        values = [value.strip() for value in configured.split(",")]
+    elif isinstance(configured, list):
+        values = configured
+    else:
+        raise ValueError("TROCCO datamart definition IDs must be a list or comma-separated string")
+    return [int(value) for value in values if str(value).strip()]
+
+
+def _trocco_datamart_job_payload(*, datamart_definition_id: int, workflow_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    job_payload: dict[str, Any] = {"datamart_definition_id": datamart_definition_id}
+    for key in ("context_time", "custom_variables"):
+        if key in payload:
+            job_payload[key] = payload[key]
+    if payload.get("memo"):
+        job_payload["memo"] = payload["memo"]
+    if payload.get("run_reason"):
+        job_payload["run_reason"] = payload["run_reason"]
+    job_payload.setdefault(
+        "custom_variables",
+        [
+            {"name": "trocco_workflow_id", "value": str(workflow_id)},
+            {"name": "trigger_source", "value": "cloud_run_drive_sales_import"},
+        ],
+    )
+    return job_payload
+
+
+def _trocco_workflow_response(*, workflow_id: int, datamart_jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    failed_job = next((job for job in datamart_jobs if not _trocco_job_succeeded(job)), None)
+    last_job = datamart_jobs[-1] if datamart_jobs else {}
+    status_code = failed_job.get("status_code") if failed_job else 200
+    return {
+        "status_code": status_code,
+        "body": {
+            "workflow_id": workflow_id,
+            "job_id": last_job.get("job_id"),
+            "datamart_jobs": datamart_jobs,
+        },
+    }
+
+
+def _trocco_job_succeeded(job: dict[str, Any]) -> bool:
+    status_code = job.get("status_code")
+    return bool(status_code is not None and 200 <= int(status_code) < 300)
+
+
+def _trocco_job_id(body: Any) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    for key in ("job_id", "jobId", "id"):
+        value = body.get(key)
+        if value is not None:
+            return str(value)
+    nested_job = body.get("job")
+    if isinstance(nested_job, dict) and nested_job.get("id") is not None:
+        return str(nested_job["id"])
+    data = body.get("data")
+    if isinstance(data, dict):
+        for key in ("job_id", "id"):
+            value = data.get(key)
+            if value is not None:
+                return str(value)
+    return None
