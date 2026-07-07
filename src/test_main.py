@@ -58,7 +58,8 @@ def test_execute_agent_request_uses_run_context_execution_mode(monkeypatch):
     assert response.get_json()["input"]["payload"]["execution_mode"] == "staging_load_only"
 
 
-def test_execute_requires_landing_bucket():
+def test_execute_requires_landing_bucket(monkeypatch):
+    monkeypatch.delenv("LANDING_BUCKET", raising=False)
     client = app.test_client()
 
     response = client.post(
