@@ -33,6 +33,7 @@ from safe_execute import (  # noqa: E402
     execute_safe_mode,
     is_safe_execution_mode,
 )
+from target_month_defaults import apply_target_month_defaults  # noqa: E402
 
 
 app = Flask(__name__)
@@ -57,7 +58,8 @@ def _with_execution_mode(request_body: dict[str, Any], source: dict[str, Any]) -
 
 
 def _prepare_execution_body(body: dict[str, Any], *, require_landing_bucket: bool = False) -> dict[str, Any]:
-    execution_body = apply_execution_defaults(body)
+    execution_body = apply_target_month_defaults(body)
+    execution_body = apply_execution_defaults(execution_body)
     if require_landing_bucket and not has_landing_bucket(execution_body):
         raise ValueError("landing.bucket or LANDING_BUCKET environment variable is required for /execute")
     return execution_body
